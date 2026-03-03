@@ -469,8 +469,6 @@ getline:
     bcc @readlp
     cmp #$0D       
     bne @loop
-    cmp #$0A
-    bne @loop
 @ends:                ; clear all if y eq \0
     lda #$20
     sta INBUF       ; start with space
@@ -659,10 +657,10 @@ CLEAR:
     lda #0
     sta DFLAG
 zpclear:
-    ldx #0
+    ldx #$50
     lda #0
 zerolp:
-    sta  $50,x
+    sta  $00,x
     inx
     bne zerolp    
     ldx #0
