@@ -88,15 +88,15 @@
 ;   but see the notes for Devs.
 ;
 ;   common memory model organization of Forth: 
-;   [INBUF->...<-DSPTR: user forth dictionary :NEXTHEAP->pad...<-RTPTR]
+;   [tib->...<-spt: user forth dictionary :here->pad...<-rpt]
 ;   then backward stacks allow to use the slack space ... 
 ;
 ;   this 6502 Forth memory model blocked in pages of 256 bytes:
-;   [page0][page1][page2][core ... forth dictionary ...NEXTHEAP...]
+;   [page0][page1][page2][core ... forth dictionary ...here...]
 ;   
 ;   At page2: 
 ;
-;   |$00 INBUF> .. $50| <DSPTR..DSEND $98| <RTPTR..RTEND $E0|SCRIBB> ..$FF|
+;   |$00 tib> .. $50| <spt..sp0 $98| <rpt..rp0 $E0|pic> ..$FF|
 ;
 ;   From page 3 onwards:
 ;
@@ -119,7 +119,7 @@
 ;
 ;   Not using smudge, 
 ;       colon saves "here" into "back" and 
-;       semis loads "LASTHEAPest" from "back";
+;       semis loads "lastest" from "back";
 ;
 ;   Do not risk to put stacks with $FF.
 ;
@@ -137,9 +137,7 @@
 ;
 ; Stuff for ca65 compiler
 ;
-.debuginfo
-.setcpu "65C02"
-
+.p02
 .feature c_comments
 .feature string_escapes
 .feature org_per_seg
@@ -181,56 +179,60 @@ hcount .set 0
 H0000 = 0
 
 ;---------------------------------------------------------------------
+; define thread code model
+; MTC is default
+; use_DTC = 1
+
 ; uncomment to include the extras (sic)
-use_extras = 1 
+; use_extras = 1 
 
 ; uncomment to include the extensions (sic)
-use_extensions = 1 
+; use_extensions = 1 
 
-DEBUG := 1
+;---------------------------------------------------------------------
+/*
+NOTES:
 
-CODESTART = $0500
+    not finished yet :)
+
+*/
+;----------------------------------------------------------------------
+;
+; alias
 
 ; cell size, two bytes, 16-bit
 CELL = 2    
+
 ; highlander, immediate flag.
 FLAG_IMM = 1<<7
 
+; "all in" page $200
+
 ; terminal input buffer, forward
 ; getline, token, skip, scan, depends on page boundary
-INBUF = $0400
+tib = $0200
 
 ; reserve 80 bytes, (72 is enough) 
 ; moves forwards
-INBUF_end = $50
+tib_end = $50
 
 ; data stack, 36 cells,
 ; moves backwards, push decreases before copy
-DSEND = $98
+sp0 = $98
 
 ; return stack, 36 cells, 
 ; moves backwards, push decreases before copy
-RTEND = $E0
+rp0 = $E0
 
 ; reserved for scribbles
-SCRIBB = RTEND
+pic = rp0
 
 ;----------------------------------------------------------------------
 ; no values here or must be a BSS
 .segment "ZERO"
-.org $40
-mainoff: 
-   .res 2
-endsoff:
-   .res 2
-ramstart:
-   .res 2
-TEMP1:
-   .res 2
-DFLAG:
-   .res 1
-   
-.org $e0
+
+* = $E0
+
 nil:  ; empty for fixed reference
 
 ; as user variables
@@ -238,29 +240,35 @@ nil:  ; empty for fixed reference
 
 ; internal Forth 
 
-STATUS:   .word $0 ; state at lsb, last size+flag at msb
-CURBUF:   .word $0 ; CURBUF next free byte in TIB
-LASTHEAP:   .word $0 ; last link cell
-NEXTHEAP:   .word $0 ; next free cell in heap dictionary
+stat:   .word $0 ; state at lsb, last size+flag at msb
+toin:   .word $0 ; toin next free byte in TIB
+last:   .word $0 ; last link cell
+here:   .word $0 ; next free cell in heap dictionary, aka dpt
 
 ; pointers registers
 
-DSPTR:    .word $0 ; data stack base,
-RTPTR:    .word $0 ; return stack base
-INSTPTR:    .word $0 ; instruction pointer
-WORDPTR:    .word $0 ; word pointer          rename WORDPTR
+spt:    .word $0 ; data stack base,
+rpt:    .word $0 ; return stack base
+ipt:    .word $0 ; instruction pointer
+wrd:    .word $0 ; word pointer
+
+* = $F0
 
 ; free for use
 
-TEMP2:    .word $0 ; first
-TEMP3:    .word $0 ; second
-TEMP4:    .word $0 ; third    rename TEMP4
-TEMP5:    .word $0 ; fourth   rename TEMP5
+fst:    .word $0 ; first
+snd:    .word $0 ; second
+trd:    .word $0 ; third
+fth:    .word $0 ; fourth
 
 ; used, reserved
 
-NXTTOK:   .word $0 ; next token in tib (INBUF)
-BACKHEAP:   .word $0 ; hold 'here while compile
+tout:   .word $0 ; next token in TIB
+back:   .word $0 ; hold 'here while compile
+
+; for future expansion, reserved
+head:   .word $0 ; heap forward, also DP
+tail:   .word $0 ; heap backward
 
 ;----------------------------------------------------------------------
 ;.segment "ONCE" 
@@ -273,62 +281,72 @@ BACKHEAP:   .word $0 ; hold 'here while compile
 ;----------------------------------------------------------------------
 .segment "CODE" 
 
-WRITE_CHAR = $F803
-READ_CHAR = $F800
-WRITE_BYTE = $F8A3
-INROM = $A000
-
 ;
 ; leave space for page zero, hard stack, 
 ; and buffer, locals, forth stacks
 ;
-; ************ the real deal...
-;
-.org CODESTART
-    
-main:
-      
-cold:
-    cld
-    jsr CLEAR          ; zero out zero page
+* = $300
 
+main:
+
+;----------------------------------------------------------------------
+; common must
+;
+cold:
+;   disable interrupts
+    sei
+
+;   clear BCD
+    cld
+
+;   set real stack
+    ldx #$FF
+    txs
+
+;   enable interrupts
+    cli
+
+;----------------------------------------------------------------------
 warm:
 ; link list of headers
     lda #>h_exit
-    sta LASTHEAP + 1
+    sta last + 1
     lda #<h_exit
-    sta LASTHEAP
+    sta last + 0
 
-; next heap free cell
+; next heap free cell, same as init:  
     lda #>ends + 1
-    sta NEXTHEAP + 1
+    sta here + 1
     lda #0
-    sta NEXTHEAP
+    sta here + 0
 
 ;---------------------------------------------------------------------
 ; supose never change
 reset:
-    ldy #>INBUF
-    sty DSPTR + 1
-    sty RTPTR + 1
-    sty CURBUF + 1
-    sty NXTTOK + 1
+    ldy #>tib
+    sty spt + 1
+    sty rpt + 1
+    sty toin + 1
+    sty tout + 1
 
 abort:
-    ldy #<DSEND
-    sty DSPTR
+    ldy #<sp0
+    sty spt + 0
 
 quit:
-    ldy #<RTEND
-    sty RTPTR
+    ldy #<rp0
+    sty rpt + 0
 
-
-    ldy #0          ; reset INBUF
-    sty INBUF     ; clear INBUF stuff
-    sty CURBUF    ; clear cursor  (pointer into INBUF)
-    sty STATUS    ; status is 'interpret' == \0
+; reset tib
+    ldy #0      
+; clear tib stuff
+    sty tib + 0
+; clear cursor
+    sty toin + 0
+; stat is 'interpret' == \0
+    sty stat + 0
     
-    .byte $2c       ; mask next two bytes, nice trick !
+    .byte $2c   ; mask next two bytes, nice trick !
 
 ;---------------------------------------------------------------------
 ; the outer loop
@@ -340,68 +358,79 @@ resolvept:
 okey:
 
 ;;   uncomment for feedback
-.ifdef DEBUG
-    jsr DUMPREG
-.endif
-    lda STATUS
-    bne resolve
-    lda #'O'
-    jsr WRITE_CHAR
-    lda #'K'
-    jsr WRITE_CHAR
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    
-resolve:           ; get a token
+;    lda stat + 0
+;    bne resolve
+;    lda #'O'
+;    jsr putchar
+;    lda #'K'
+;    jsr putchar
+;    lda #10
+;    jsr putchar
+
+resolve:
+; get a token
     jsr token
-    lda #'P'
-    jsr WRITE_CHAR
 
-find:                ; load last
-    lda LASTHEAP + 1
-    sta TEMP3 + 1
-    lda LASTHEAP
-    sta TEMP3
-    
-@loop:              ; lsb linked list
-    lda TEMP3
-    sta WORDPTR
-    ora TEMP3 + 1              ; verify 00 00 if at start of list
-;    beq abort             ; commented out becuz below
+    ; lda #'P'
+    ; jsr putchar
 
-    bne @each              ; PGS - did he forget this?
+find:
+; load last
+    lda last + 1
+    sta snd + 1
+    lda last + 0
+    sta snd + 0
     
+@loop:
+; lsb linked list
+    lda snd + 0
+    sta wrd + 0
+
+; verify \0x0
+    ora snd + 1
+    beq abort
+
+;   maybe to place a code for number? 
+;   but not for now.
+
 ;;   uncomment for feedback, comment out "beq abort" above
-    lda #'?'
-    jsr WRITE_CHAR
-    lda #'?'
-    jsr WRITE_CHAR
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jmp abort  ; end of dictionary, no more words to search, abort
+;    lda #'?'
+;    jsr putchar
+;    lda #'?'
+;    jsr putchar
+;    lda #10
+;    jsr putchar
+;    jmp abort  ; end of dictionary, no more words to search, abort
 
-@each:                        ; msb linked list 
-    lda TEMP3 + 1
-    sta WORDPTR + 1                        ; update next link 
-    
-    ldx #WORDPTR      ; from    was (WORDPTR), no such addressing mode
-    ldy #TEMP3        ; into    was (TEMP3), no such addressing mode
+@each:    
+
+; msb linked list
+    lda snd + 1
+    sta wrd + 1
+
+; update next link 
+    ldx #(wrd) ; from 
+    ldy #(snd) ; into
     jsr copyfrom
-    ldy #0         ; compare words
-    lda (WORDPTR), y     ; save the flag, first byte is (size and flag) 
-    sta STATUS + 1
+
+; compare words
+    ldy #0
+
+; save the flag, first byte is (size and flag) 
+    lda (wrd), y
+    sta stat + 1
 
 ; compare chars
 @equal:
-    lda (NXTTOK), y
-    cmp #32          ; space ends
+    lda (tout), y
+; space ends
+    cmp #32  
     beq @done
-    sec              ; verify 
-    sbc (WORDPTR), y     
-    asl              ; clean 7-bit ascii
+; verify 
+    sec
+    sbc (wrd), y     
+; clean 7-bit ascii
+    asl        
     bne @loop
 
 ; next char
@@ -409,104 +438,143 @@ find:                ; load last
     bne @equal
 
 @done:
-; update WORDPTR
+; update wrd
     tya
-    ;; ldx #(WORDPTR) ; set already
+    ;; ldx #(wrd) ; set already
     ;; addwx also clear carry
     jsr addwx
     
 eval:
 ; executing ? if == \0
-    lda STATUS   
+    lda stat + 0   
     beq execute
 
 ; immediate ? if < \0
-    lda STATUS + 1   
+    lda stat + 1   
     bmi immediate      
 
 compile:
-    lda #'C'
-    jsr WRITE_CHAR
+
+    ; lda #'C'
+    ; jsr putchar
+
     jsr wcomma
+
     bcc resolve
 
 immediate:
 execute:
 
-    lda #'E'
-    jsr WRITE_CHAR
+    ; lda #'E'
+    ; jsr putchar
 
     lda #>resolvept
-    sta INSTPTR + 1
+    sta ipt + 1
     lda #<resolvept
-    sta INSTPTR
+    sta ipt + 0
 
+;~~~~~~~~
+.ifdef use_DTC
+
+    jmp (wrd)
+
+.else 
+    
     jmp pick
 
+.endif
+;~~~~~~~~
+
+    
 ;---------------------------------------------------------------------
 try:
-    lda INBUF, y                   ; index is in y
-    beq getline    ; if \0  - get a line if pointing at 0
+    lda tib, y
+    beq getline    ; if \0 
     iny
-    eor #$20       ; return 0 in  A if a space 
+    eor #' '
     rts
 
 ;---------------------------------------------------------------------
 getline:
-; drop rts of try, fall through to 'token'
+; drop rts of try
     pla
     pla
-    ldy #0   ; leave the first
+
+; leave the first
+    ldy #0
 @loop:  
-    sta INBUF, y  ; dummy store on first pass, overwritten
+; is valid
+    sta tib, y  ; dummy store on first pass, overwritten
     iny
-    cpy #INBUF_end
-    beq @ends
-    jsr READ_CHAR
-    cmp #$0D       
+; would be better with 
+; end of buffer ?
+;    cpy #tib_end
+;    beq @ends
+; then 
+    jsr getchar
+; would be better with 
+; 7-bit ascii only
+;    and #$7F        
+; unix \n
+    cmp #10         
     bne @loop
-    cmp #$0A
-    bne @loop
-@ends:                ; clear all if y eq \0
-    lda #$20
-    sta INBUF       ; start with space
-    sta INBUF, y        ; ends with space
-    lda #0            ; mark eol with \0
-    sta INBUF + 1, y
+; would be better with 
+; no controls
+;    cmp #' '
+;    bmi @loop
+
+; clear all if y eq \0
+@ends:
+; grace \b
+    lda #32
+    sta tib + 0 ; start with space
+    sta tib, y  ; ends with space
+; mark eol with \0
+    lda #0
+    sta tib + 1, y
 ; start it
-    sta CURBUF
-.ifdef DEBUG
-    jsr DUMPREG
-.endif
+    sta toin + 0
 
 ;---------------------------------------------------------------------
 ; in place every token,
 ; the counter is placed at last space before word
 ; no rewinds
 token:
-    ldy CURBUF   ; last position on INBUF
+; last position on tib
+    ldy toin + 0
 
-@skip:   ; skip spaces
+@skip:
+; skip spaces
     jsr try
     beq @skip
-    dey   ; keep y == <start of input word> + 1
-    sty NXTTOK
 
-@scan:  ; scan spaces
+; keep y == start + 1
+    dey
+    sty tout + 0
+
+@scan:
+; scan spaces
     jsr try
     bne @scan
-    dey   ; keep y == <end of input word> + 1  
-    sty CURBUF 
 
-@done:  ; find size and store it
+; keep y == stop + 1  
+    dey
+    sty toin + 0 
+
+@done:
+; sizeof
     tya
     sec
-    sbc NXTTOK     
-    ldy NXTTOK    ; keep it
+    sbc tout + 0
+
+; keep it
+    ldy tout + 0
     dey
-    sta INBUF, y  ; store size for counted string 
-    sty NXTTOK
-    clc     ; clean - setup token
+    sta tib, y  ; store size for counted string 
+    sty tout + 0
+
+; setup token
+    clc     ; clean 
     rts
 
 ;---------------------------------------------------------------------
@@ -514,9 +582,25 @@ token:
 ;
 ;  Hydra-16
 ; 
+getchar:
+    lda $F800
+
+eofs:
+; EOF ?
+    cmp #$FF ; also clean carry :)
+    beq byes
+
+putchar:
+    sta $F803
+    rts
+
 ; exit for emulator  
 byes:
     jmp $FE00
+
+;
+;   lib6502 emulator
+;---------------------------------------------------------------------
 
 ;---------------------------------------------------------------------
 ; decrement a word in page zero. offset by X
@@ -541,13 +625,13 @@ decwx:
 ; classic heap moves always forward
 ;
 stawrd:
-    sta WORDPTR + 1
+    sta wrd + 1
 
 wcomma:
-    ldy #(WORDPTR)
+    ldy #(wrd)
 
 comma: 
-    ldx #(NEXTHEAP)
+    ldx #(here)
     ; fall throught
 
 ;---------------------------------------------------------------------
@@ -567,19 +651,19 @@ copyinto:
 ;
 ;---------------------------------------------------------------------
 spush1:
-    ldy #(TEMP2)
+    ldy #(fst)
 
 ;---------------------------------------------------------------------
 ; push a cell 
 ; from a page zero address indexed by Y
 ; into a page zero indirect address indexed by X
 spush:
-    ldx #(DSPTR)
+    ldx #(spt)
     ; jmp push
     .byte $2c   ; mask next two bytes, nice trick !
 
 rpush:
-    ldx #(RTPTR)
+    ldx #(rpt)
 
 ;---------------------------------------------------------------------
 ; classic stack backwards
@@ -594,13 +678,13 @@ push:
 
 ;---------------------------------------------------------------------
 spull2:
-    ldy #(TEMP3)
+    ldy #(snd)
     jsr spull
     ; fall through
 
 ;---------------------------------------------------------------------
 spull1:
-    ldy #(TEMP2)
+    ldy #(fst)
     ; fall through
 
 ;---------------------------------------------------------------------
@@ -608,12 +692,12 @@ spull1:
 ; from a page zero indirect address indexed by X
 ; into a page zero address indexed by y
 spull:
-    ldx #(DSPTR)
+    ldx #(spt)
     ; jmp pull
     .byte $2c   ; mask next two bytes, nice trick !
 
 rpull:
-    ldx #(RTPTR)
+    ldx #(rpt)
 
 ;---------------------------------------------------------------------
 ; classic stack backwards
@@ -646,210 +730,6 @@ addwx:
 @ends:
     rts
 
-;
-;  zero out $50 - $FF, meet and greet
-;
-CLEAR:
-     lda #0
-    sta DFLAG
-zpclear:
-    ldx #0
-    lda #0
-zerolp:
-    sta  $50,x
-    inx
-    bne zerolp
-        ;  meet and greet
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    lda #'m'
-    jsr WRITE_CHAR
-    lda #'F'
-    jsr WRITE_CHAR
-    lda #'6'
-    jsr WRITE_CHAR
-    lda #'6'
-    jsr WRITE_CHAR
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR    
-    rts
-;
-;    
-.ifdef DEBUG 
-;      argh.
-;   Include DEBUG code here
-;   
- ;
-;  debug stuff
-;
-DUMPTXT1:
-        .byte "SP/PC/nv-bdizc/A/X/Y -> "
-        .byte 0
-
-DUMPREG:       ; dump registers safely and print
-        php                     ; -3
-        pha                     ; -4
-        phx                     ; -5
-        phy                     ; -6
-        lda   DFLAG
-        bne   DPFCHECK
-        jmp   DREGNXT
-DPFCHECK:
-        ldy   #0
-        lda   #$0D
-        jsr   WRITE_CHAR
-        lda   #$0A
-        jsr   WRITE_CHAR
-DUMPLP0:        
-        lda   DUMPTXT1, y
-        beq   DUMPCON
-        jsr   WRITE_CHAR
-        iny
-        bra   DUMPLP0
-DUMPCON:
-        tsx                     ; -6
-        txa
-        clc
-        adc   #6
-        jsr   WRITE_BYTE        ; print stack pointer b4 jump
-        lda   #'/'
-        jsr   WRITE_CHAR 
-        inx                     ; -5
-        inx                     ; -4
-        inx                     ; -3
-        inx                     ; -2
-        inx                     ; -1
-        lda   $0100,x              ; get PC LSB
-        tay 
-        inx                     ; 0
-        lda   $0100,x              ; get PC MSB
-        jsr   WRITE_BYTE           
-        tya
-        jsr   WRITE_BYTE        
-        lda   #'/'
-        jsr   WRITE_CHAR  
-        ;   whew
-        ;
-        dex                      ; -1
-        dex                      ; -2
-        lda   $0100,x            ; get status byte
-        ldy   #8
-DUMPLP2:
-        rol
-        pha
-        bcc   DUMPSKx            ; NV-BDIZC
-        lda   #$31
-        bra   DUMPSKy
-DUMPSKx: 
-        lda   #$30      
-DUMPSKy:
-        jsr   WRITE_CHAR         ; print y-th bit
-        pla
-        dey   
-        bne   DUMPLP2
-        lda   #'/'
-        jsr   WRITE_CHAR
-        dex                       ; -3
-        lda   $0100,x 
-        jsr   WRITE_BYTE           ; print A
-        lda   #'/'
-        jsr   WRITE_CHAR
-        dex                        ; -4
-        lda   $0100,x 
-        jsr   WRITE_BYTE           ; print X
-        lda   #'/'
-        jsr   WRITE_CHAR
-        dex                        ; -5
-        lda   $0100,x 
-        jsr   WRITE_BYTE           ; print Y
-        lda   #$0D
-        jsr   WRITE_CHAR
-        lda   #$0A
-        jsr   WRITE_CHAR
-DREGLP1: 
-        jsr   READ_CHAR              ; wait for a key
-        bcc   DREGLP1
-        cmp   #'s'                  ; print out stack?
-        bne   DREGSK3
-        jsr   DUMPSTACK
-DREGSK3:
-        cmp   #'z'                  ; print out zp?
-        bne  DREGSK5
-        jsr  DUMPZP
-DREGSK5:
-        cmp   #'t'                  ; print out INBUF?
-        bne  DREGSK4
-        jsr  DUMPTIB
-DREGSK4:        
-        cmp   #'x'
-        bne   DREGNXT
-        jsr   $FE00                ; go to Wozmon if necc
-DREGNXT:
-        ply     ; and restore everything
-        plx
-        pla
-        plp
-        rts    
-
-DUMPTIB:              ; dump TIB
-        php
-        pha
-        ldy #0
-        sty TEMP1
-        lda #<INBUF
-        sta TEMP1+1
-        bra DSTKLP1
-
-DUMPSTACK:            ; dump STACK
-        php
-        pha
-        ldy #0
-        sty TEMP1
-        lda #1
-        sta TEMP1+1
-        bra DSTKLP1
-DUMPZP:               ; dump ZP
-        php
-        pha
-        ldy #0
-        sty TEMP1
-        sty TEMP1+1   
-DSTKLP1:
-        tya
-        jsr WRITE_BYTE
-        lda #':'
-        jsr WRITE_CHAR
-DSTKLP2:
-        lda (TEMP1), y
-        jsr WRITE_BYTE
-        lda #$20
-        jsr WRITE_CHAR
-        iny
-        tya
-        and #$0F       ; 00001111  
-        beq  DSTKSKL   
-        bra  DSTKLP2
-DSTKSKL:
-        lda #$0D
-        jsr WRITE_CHAR
-        lda #$0A
-        jsr WRITE_CHAR
-        tya
-        bne DSTKLP1        
-DUMPSTKEND:
-        lda #$0D
-        jsr WRITE_CHAR
-        lda #$0A
-        jsr WRITE_CHAR
-        pla
-        plp
-        rts
-.endif
-           
 ;---------------------------------------------------------------------
 ;
 ; the primitives, 
@@ -876,26 +756,26 @@ def_word "abort", "abort_", 0
 ;----------------------------------------------------------------------
 ; ( -- ) ae list of data stack
 def_word "%S", "splist", 0
-    lda DSPTR
-    sta TEMP2
-    lda DSPTR + 1
-    sta TEMP2 + 1
+    lda spt + 0
+    sta fst + 0
+    lda spt + 1
+    sta fst + 1
     lda #'S'
-    jsr WRITE_CHAR
-    lda #DSEND
+    jsr putchar
+    lda #sp0
     jsr list
     jmp next
 
 ;----------------------------------------------------------------------
 ; ( -- ) ae list of return stack
 def_word "%R", "rplist", 0
-    lda RTPTR
-    sta TEMP2
-    lda RTPTR + 1
-    sta TEMP2 + 1
+    lda rpt + 0
+    sta fst + 0
+    lda rpt + 1
+    sta fst + 1
     lda #'R'
-    jsr WRITE_CHAR
-    lda #RTEND
+    jsr putchar
+    lda #rp0
     jsr list
     jmp next
 
@@ -904,24 +784,24 @@ def_word "%R", "rplist", 0
 list:
 
     sec
-    sbc TEMP2
+    sbc fst + 0
     lsr
 
     tax
 
-    lda TEMP2 + 1
+    lda fst + 1
     jsr puthex
-    lda TEMP2
+    lda fst + 0
     jsr puthex
 
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
 
     txa
     jsr puthex
 
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
 
     txa
     beq @ends
@@ -929,12 +809,12 @@ list:
     ldy #0
 @loop:
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
     iny
-    lda (TEMP2),y 
+    lda (fst),y 
     jsr puthex
     dey
-    lda (TEMP2),y 
+    lda (fst),y 
     jsr puthex
     iny 
     iny
@@ -948,25 +828,25 @@ list:
 def_word "dump", "dump", 0
 
     lda #$0
-    sta TEMP2
+    sta fst + 0
     lda #>ends + 1
-    sta TEMP2 + 1
+    sta fst + 1
 
-    ldx #(TEMP2)
+    ldx #(fst)
     ldy #0
 
 @loop:
     
-    lda (TEMP2),y
-    jsr WRITE_CHAR
+    lda (fst),y
+    jsr putchar
     jsr incwx
 
-    lda TEMP2
-    cmp NEXTHEAP
+    lda fst + 0
+    cmp here + 0
     bne @loop
 
-    lda TEMP2 + 1
-    cmp NEXTHEAP + 1
+    lda fst + 1
+    cmp here + 1
     bne @loop
 
     clc  ; clean
@@ -977,58 +857,56 @@ def_word "dump", "dump", 0
 def_word "words", "words", 0
 
 ; load lastest
-    lda LASTHEAP + 1
-    sta TEMP3 + 1
-    lda LASTHEAP
-    sta TEMP3
+    lda last + 1
+    sta snd + 1
+    lda last + 0
+    sta snd + 0
 
 ; load here
-    lda NEXTHEAP + 1
-    sta TEMP4 + 1
-    lda NEXTHEAP
-    sta TEMP4
+    lda here + 1
+    sta trd + 1
+    lda here + 0
+    sta trd + 0
     
 @loop:
 ; lsb linked list
-    lda TEMP3
-    sta TEMP2
+    lda snd + 0
+    sta fst + 0
 
 ; verify \0x0
-    ora TEMP3 + 1
+    ora snd + 1
     beq @ends
 
 ; msb linked list
-    lda TEMP3 + 1
-    sta TEMP2 + 1
+    lda snd + 1
+    sta fst + 1
 
 @each:    
 
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    
+    lda #10
+    jsr putchar
+
 ; put address
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
 
-    lda TEMP2 + 1
+    lda fst + 1
     jsr puthex
-    lda TEMP2
+    lda fst + 0
     jsr puthex
 
 ; put link
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
 
     ldy #1
-    lda (TEMP2), y
+    lda (fst), y
     jsr puthex
     dey 
-    lda (TEMP2), y
+    lda (fst), y
     jsr puthex
 
-    ldx #(TEMP2)
+    ldx #(fst)
     lda #2
     jsr addwx
 
@@ -1039,21 +917,21 @@ def_word "words", "words", 0
 ; update
     iny
     tya
-    ldx #(TEMP2)
+    ldx #(fst)
     jsr addwx
 
 ; show CFA
 
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
     
-    lda TEMP2 + 1
+    lda fst + 1
     jsr puthex
-    lda TEMP2
+    lda fst + 0
     jsr puthex
 
 ; check if is a primitive
-    lda TEMP2 + 1
+    lda fst + 1
     cmp #>ends + 1
     bmi @continue
 
@@ -1063,19 +941,19 @@ def_word "words", "words", 0
 
 @continue:
     
-    lda TEMP3
-    sta TEMP4
-    lda TEMP3 + 1
-    sta TEMP4 + 1
+    lda snd + 0
+    sta trd + 0
+    lda snd + 1
+    sta trd + 1
 
     ldy #0
-    lda (TEMP4), y
-    sta TEMP3
+    lda (trd), y
+    sta snd + 0
     iny
-    lda (TEMP4), y
-    sta TEMP3 + 1
+    lda (trd), y
+    sta snd + 1
 
-    ldx #(TEMP4)
+    ldx #(trd)
     lda #2
     jsr addwx
 
@@ -1089,22 +967,22 @@ def_word "words", "words", 0
 ; ae put size and name 
 show_name:
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
 
-    lda (TEMP2), y
+    lda (fst), y
     jsr puthex
     
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
 
-    lda (TEMP2), y
+    lda (fst), y
     and #$7F
     tax
 
  @loop:
     iny
-    lda (TEMP2), y
-    jsr WRITE_CHAR
+    lda (fst), y
+    jsr putchar
     dex
     bne @loop
 
@@ -1115,25 +993,25 @@ show_name:
 show_refer:
 ; ae put references PFA ... 
 
-    ldx #(TEMP2)
+    ldx #(fst)
 
 @loop:
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
 
-    lda TEMP2 + 1
+    lda fst + 1
     jsr puthex
-    lda TEMP2
+    lda fst + 0
     jsr puthex
 
     lda #':'
-    jsr WRITE_CHAR
+    jsr putchar
     
     iny 
-    lda (TEMP2), y
+    lda (fst), y
     jsr puthex
     dey
-    lda (TEMP2), y
+    lda (fst), y
     jsr puthex
 
     lda #2
@@ -1141,11 +1019,11 @@ show_refer:
 
 ; check if ends
 
-    lda TEMP2
-    cmp TEMP4
+    lda fst + 0
+    cmp trd + 0
     bne @loop
-    lda TEMP2 + 1
-    cmp TEMP4 + 1
+    lda fst + 1
+    cmp trd + 1
     bne @loop
 
 @ends:
@@ -1161,12 +1039,12 @@ seek:
     iny
     beq @ends
 
-    lda (TEMP2), y
+    lda (fst), y
     cmp #>exit
     bne @loop1
 
     dey 
-    lda (TEMP2), y
+    lda (fst), y
     cmp #<exit
     beq @ends
     
@@ -1183,11 +1061,11 @@ seek:
 ; ( u -- u ) print tos in hexadecimal, swaps order
 def_word ".", "dot", 0
     lda #' '
-    jsr WRITE_CHAR
+    jsr putchar
     jsr spull1
-    lda TEMP2 + 1
+    lda fst + 1
     jsr puthex
-    lda TEMP2
+    lda fst + 0
     jsr puthex
     jsr spush1
     jmp next
@@ -1210,7 +1088,7 @@ puthex:
     adc #$06
 @ends:
     clc  ; clean
-    jmp WRITE_CHAR
+    jmp putchar
 
 .endif
 
@@ -1228,12 +1106,12 @@ number:
     asl
     asl
     asl
-    sta TEMP2 + 1
+    sta fst + 1
 
     iny 
     jsr @very
-    ora TEMP2 + 1
-    sta TEMP2 + 1
+    ora fst + 1
+    sta fst + 1
     
     iny 
     jsr @very
@@ -1241,18 +1119,18 @@ number:
     asl
     asl
     asl
-    sta TEMP2
+    sta fst + 0
 
     iny 
     jsr @very
-    ora TEMP2
-    sta TEMP2
+    ora fst + 0
+    sta fst + 0
 
     clc ; clean
     rts
 
 @very:
-    lda (NXTTOK), y
+    lda (tout), y
     sec
     sbc #$30
     bmi @erro
@@ -1281,20 +1159,20 @@ number:
 ; ( w -- w/2 ) ; shift right
 def_word "2/", "shr", 0
     jsr spull1
-    lsr TEMP2 + 1
-    ror TEMP2
+    lsr fst + 1
+    ror fst + 0
     jmp this
 
 ;---------------------------------------------------------------------
 ; ( a -- ) execute a jump to a reference at top of data stack
 def_word "exec", "exec", 0 
     jsr spull1
-    jmp (TEMP2)
+    jmp (fst)
 
 ;---------------------------------------------------------------------
 ; ( -- ) execute a jump to a reference at IP
 def_word ":$", "docode", 0 
-    jmp (INSTPTR)
+    jmp (ipt)
 
 ;---------------------------------------------------------------------
 ; ( -- ) execute a jump to next
@@ -1309,8 +1187,8 @@ def_word ";$", "donext", 0
 ;---------------------------------------------------------------------
 ; ( -- u ) ; tos + 1 unchanged
 def_word "key", "key", 0
-    jsr READ_CHAR
-    sta TEMP2
+    jsr getchar
+    sta fst + 0
     ; jmp this  ; uncomment if char could be \0
     bne this    ; always taken
     
@@ -1318,8 +1196,8 @@ def_word "key", "key", 0
 ; ( u -- ) ; tos + 1 unchanged
 def_word "emit", "emit", 0
     jsr spull1
-    lda TEMP2
-    jsr WRITE_CHAR
+    lda fst + 0
+    jsr putchar
     ; jmp next  ; uncomment if carry could be set
     bcc jmpnext ; always taken
 
@@ -1328,8 +1206,8 @@ def_word "emit", "emit", 0
 def_word "!", "store", 0
 storew:
     jsr spull2
-    ldx #(TEMP3) 
-    ldy #(TEMP2) 
+    ldx #(snd) 
+    ldy #(fst) 
     jsr copyinto
     ; jmp next  ; uncomment if carry could be set
     bcc jmpnext ; always taken
@@ -1338,12 +1216,12 @@ storew:
 ; ( w1 w2 -- NOT(w1 AND w2) )
 def_word "nand", "nand", 0
     jsr spull2
-    lda TEMP3
-    and TEMP2
+    lda snd + 0
+    and fst + 0
     eor #$FF
-    sta TEMP2
-    lda TEMP3 + 1
-    and TEMP2 + 1
+    sta fst + 0
+    lda snd + 1
+    and fst + 1
     eor #$FF
     ; jmp keeps  ; uncomment if carry could be set
     bcc keeps ; always taken
@@ -1353,11 +1231,11 @@ def_word "nand", "nand", 0
 def_word "+", "plus", 0
     jsr spull2
     clc  ; better safe than sorry
-    lda TEMP3
-    adc TEMP2
-    sta TEMP2
-    lda TEMP3 + 1
-    adc TEMP2 + 1
+    lda snd + 0
+    adc fst + 0
+    sta fst + 0
+    lda snd + 1
+    adc fst + 1
     jmp keeps
 
 ;---------------------------------------------------------------------
@@ -1365,19 +1243,19 @@ def_word "+", "plus", 0
 def_word "@", "fetch", 0
 fetchw:
     jsr spull1
-    ldx #(TEMP2)
-    ldy #(TEMP3)
+    ldx #(fst)
+    ldy #(snd)
     jsr copyfrom
     ; fall throught
 
 ;---------------------------------------------------------------------
 copys:
     lda 0, y
-    sta TEMP2
+    sta fst + 0
     lda 1, y
 
 keeps:
-    sta TEMP2 + 1
+    sta fst + 1
 
 this:
     jsr spush1
@@ -1389,42 +1267,42 @@ jmpnext:
 ; ( 0 -- $0000) | ( n -- $FFFF) not zero at top ?
 def_word "0#", "zeroq", 0
     jsr spull1
-    lda TEMP2 + 1
-    ora TEMP2
+    lda fst + 1
+    ora fst + 0
     beq isfalse  ; is \0 ?
 istrue:
     lda #$FF
 isfalse:
-    sta TEMP2                                                         
+    sta fst + 0                                                         
     jmp keeps  
 
 ;---------------------------------------------------------------------
 ; ( -- state ) a variable return an reference
 def_word "s@", "state", 0 
-    lda #<STATUS
-    sta TEMP2
-    lda #>STATUS
+    lda #<stat
+    sta fst + 0
+    lda #>stat
     ;  jmp keeps ; uncomment if stats not in page $0
     beq keeps   ; always taken
 
 ;---------------------------------------------------------------------
 def_word ";", "semis",  FLAG_IMM
 ; update last, panic if colon not lead elsewhere 
-    lda BACKHEAP 
-    sta LASTHEAP
-    lda BACKHEAP + 1 
-    sta LASTHEAP + 1
+    lda back + 0 
+    sta last + 0
+    lda back + 1 
+    sta last + 1
 
 ; stat is 'interpret'
     lda #0
-    sta STATUS
+    sta stat + 0
 
 ; compound words must ends with exit
 finish:
     lda #<exit
-    sta WORDPTR
+    sta wrd + 0
     lda #>exit
-    sta WORDPTR + 1
+    sta wrd + 1
     jsr wcomma
 
     ; jmp next
@@ -1433,18 +1311,18 @@ finish:
 ;---------------------------------------------------------------------
 def_word ":", "colon", 0
 ; save here, panic if semis not follow elsewhere
-    lda NEXTHEAP
-    sta BACKHEAP 
-    lda NEXTHEAP + 1
-    sta BACKHEAP + 1 
+    lda here + 0
+    sta back + 0 
+    lda here + 1
+    sta back + 1 
 
 ; stat is 'compile'
     lda #1
-    sta STATUS
+    sta stat + 0
 
 @header:
 ; copy last into (here)
-    ldy #(LASTHEAP)
+    ldy #(last)
     jsr comma
 
 ; get following token
@@ -1453,19 +1331,40 @@ def_word ":", "colon", 0
 ; copy it
     ldy #0
 @loop:    
-    lda (NXTTOK), y
+    lda (tout), y
     cmp #32    ; stops at space
     beq @ends
-    sta (NEXTHEAP), y
+    sta (here), y
     iny
     bne @loop
 
 @ends:
 ; update here 
     tya
-    ldx #(NEXTHEAP)
+    ldx #(here)
     jsr addwx
 
+;~~~~~~~~
+.ifdef use_DTC
+
+; magic NOP (EA) JSR (20), at CFA cell
+; magic = $EA20
+
+magic = $20EA
+
+; inserts the nop call
+    lda #<magic
+    sta wrd + 0
+    lda #>magic
+    jsr stawrd
+
+; inserts the reference
+    lda #<nest
+    sta wrd + 0
+    lda #>nest
+    jsr stawrd
+
+.endif
 ;~~~~~~~~
 
 ; done
@@ -1475,7 +1374,7 @@ def_word ":", "colon", 0
 ;---------------------------------------------------------------------
 ; Thread Code Engine
 ;
-;   INSTPTR is IP, WORDPTR is W
+;   ipt is IP, wrd is W
 ;
 ; for reference: 
 ;
@@ -1486,118 +1385,70 @@ def_word ":", "colon", 0
 ; ( -- ) 
 def_word "exit", "exit", 0
 unnest: ; exit
-; pull, INSTPTR = (RTPTR), RTPTR += 2 
-    ldy #(INSTPTR)
+; pull, ipt = (rpt), rpt += 2 
+    ldy #(ipt)
     jsr rpull
 
 next:
-; WORDPTR = (INSTPTR) ; INSTPTR += 2
-    ldx #(INSTPTR)
-    ldy #(WORDPTR)
+; wrd = (ipt) ; ipt += 2
+    ldx #(ipt)
+    ldy #(wrd)
     jsr copyfrom
+
+;~~~~~~~~
+.ifdef use_DTC
+
+pick:
+    jmp (wrd)
+
+nest:   ; enter
+; push, *rp = ipt, rp -=2
+    ldy #(ipt)
+    jsr rpush
+
+; pull (ip),
+    pla
+    sta ipt + 0
+    pla
+    sta ipt + 1
+
+; 6502 trick: must increase return address
+    ldx #(ipt)
+    jsr incwx
+
+    bcc next
+
+.else
 
 pick:
 ; compare pages (MSBs)
-    lda WORDPTR + 1
+    lda wrd + 1
     cmp #>ends + 1
     bmi jump
 
 nest:   ; enter
-; push, *rp = INSTPTR, rp -=2
-    ldy #(INSTPTR)
+; push, *rp = ipt, rp -=2
+    ldy #(ipt)
     jsr rpush
 
-    lda WORDPTR
-    sta INSTPTR
-    lda WORDPTR + 1
-    sta INSTPTR + 1
+    lda wrd + 0
+    sta ipt + 0
+    lda wrd + 1
+    sta ipt + 1
 
     jmp next
 
 jump: 
-    jmp (WORDPTR)
 
+    jmp (wrd)
+
+.endif
 ;~~~~~~~~
 
 ;-----------------------------------------------------------------------
 ; BEWARE, MUST BE AT END! MINIMAL THREAD CODE DEPENDS ON IT!
 ends:
-
 ;-----------------------------------------------------------------------
 ; anything above is not a primitive
 ;----------------------------------------------------------------------
-FFILL:
-        .res $342
-COPYMAIN = main - CODESTART + INROM
-RAMST = main
-COPYENDS = ends - CODESTART + INROM
 
-COPYTORAM:
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    ;
-    lda #>COPYMAIN
-    sta mainoff+1  
-    lda #<COPYMAIN
-    sta mainoff
-    ;
-    lda #<COPYENDS
-    sta endsoff
-    lda #>COPYENDS
-    sta endsoff+1
-    ;
-    lda #>RAMST
-    sta ramstart+1
-    jsr WRITE_BYTE
-    lda #<RAMST
-    sta ramstart
-    jsr WRITE_BYTE
-    ;
-    ldy  #0
-COPYLOOP:
-    lda (mainoff),y
-    sta (ramstart),y
-    lda mainoff
-    cmp endsoff
-    bne SKIP1
-    lda mainoff+1
-    cmp endsoff+1
-    beq COPYEXIT
-SKIP1:
-    lda #'.'
-    jsr WRITE_CHAR
-    inc mainoff
-    inc ramstart
-    bne COPYLOOP
-    inc mainoff+1
-    inc ramstart+1
-    ldy #0
-    beq COPYLOOP
-COPYEXIT:
-    lda ramstart+1
-    jsr WRITE_BYTE
-    lda ramstart
-    jsr WRITE_BYTE
-     lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR   
-    jmp $FE00
-;
-;             zero out zp $50-$FF
-ZEROZERO:
-    ldx #0
-    lda #0
-ZEROLP:
-    sta  $50,x
-    inx
-    bne ZEROLP
-    rts
-
-    
