@@ -457,12 +457,16 @@ getline:
     pla
     pla
     ldy #0   ; leave the first
-@loop:  
+@loop:
+
+
     sta INBUF, y  ; dummy store on first pass, overwritten
     iny
     cpy #INBUF_end
     beq @ends
+@readlp:
     jsr READ_CHAR
+    bcc @readlp
     cmp #$0D       
     bne @loop
     cmp #$0A
@@ -475,9 +479,10 @@ getline:
     sta INBUF + 1, y
 ; start it
     sta CURBUF
+
 .ifdef DEBUG
     jsr DUMPREG
-.endif
+.endif  
 
 ;---------------------------------------------------------------------
 ; in place every token,
@@ -648,9 +653,10 @@ addwx:
 
 ;
 ;  zero out $50 - $FF, meet and greet
+;  zero out INBUF also
 ;
 CLEAR:
-     lda #0
+    lda #0
     sta DFLAG
 zpclear:
     ldx #0
@@ -658,7 +664,13 @@ zpclear:
 zerolp:
     sta  $50,x
     inx
-    bne zerolp
+    bne zerolp    
+    ldx #0
+inbufzlp:
+    sta INBUF,x
+    inx
+    bne inbufzlp
+    
         ;  meet and greet
     lda #$0D
     jsr WRITE_CHAR
@@ -696,7 +708,7 @@ DUMPREG:       ; dump registers safely and print
         phx                     ; -5
         phy                     ; -6
         lda   DFLAG
-        bne   DPFCHECK
+        beq   DPFCHECK
         jmp   DREGNXT
 DPFCHECK:
         ldy   #0
@@ -800,7 +812,7 @@ DUMPTIB:              ; dump TIB
         pha
         ldy #0
         sty TEMP1
-        lda #<INBUF
+        lda #>INBUF
         sta TEMP1+1
         bra DSTKLP1
 
@@ -1309,7 +1321,9 @@ def_word ";$", "donext", 0
 ;---------------------------------------------------------------------
 ; ( -- u ) ; tos + 1 unchanged
 def_word "key", "key", 0
+KEYRDLP:
     jsr READ_CHAR
+    bcc KEYRDLP
     sta TEMP2
     ; jmp this  ; uncomment if char could be \0
     bne this    ; always taken
