@@ -49,10 +49,11 @@ variable labels and jump/branch points for more clarity.
 Needless to say it is no longer 100% 'classic', according to AGSB's 
 interpretation of Forth design standards.
 
-One of the most difficult flaws in the original source, is that AGSB 
+One of the most difficult issues with the original source, is that AGSB 
 assumes that the zero page and the page for the TIB (text input buffer at
-$0400, labeled INBUF in this version).  He also expected the zero-page
-area ($E0-$FF) used for most of the variables in this version to start at 
+$0400, labeled INBUF in this version) to be preset to $00.  He also 
+expected the zero-page area ($E0-$FF) used for most of the variables in 
+this version to start at 
 zero....
 
 So I wrote a routine (since I was using a ROM routine to copy the Forth 
