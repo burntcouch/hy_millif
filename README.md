@@ -1,4 +1,4 @@
-# hy_millif
+# HyForth for 6502
 <h2>Hydra-16 version of MilliForth</h2>
 ----------------------------------------------------------------------
 <p>
