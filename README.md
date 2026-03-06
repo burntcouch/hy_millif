@@ -17,9 +17,10 @@
   shrink in RAM footprint according to context.<p>
 <p>
 #see below for original intro from Sr. Barcellos
-
-
-
+<p>
+Full text in (https://github.com/burntcouch/hy_millif/blob/0.2/hy_millif.s)
+<p>
+<pre>
 ; ---------------------------------------------------------------------
 ;
 ;   A MilliForth for 6502 
@@ -41,4 +42,4 @@
 ;   how ? Programming a new Forth for old 8-bit cpu emulator
 ;
 ;   what ? Design the best minimal Forth engine and vocabulary
-
+</pre>
