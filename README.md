@@ -4,8 +4,8 @@
 <p>
   Patrick Struthers - March 2026
 <p>
-      - THANKS to [AGSB](https://github.com/agsb) for the starting point here....<p>
-     [LINK:](https://github.com/agsb/milliForth-6502)
+      - THANKS to AGSB (https://github.com/agsb) for the starting point here....<p>
+   MilliForth 6502 --> (https://github.com/agsb/milliForth-6502)
 <p>
 <p>  The HyForth project starts here with AGSB's core Forth engine;
   the engine will be moved to ROM and the heap will be copied to RAM
