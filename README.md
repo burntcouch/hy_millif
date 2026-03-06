@@ -65,6 +65,15 @@ either so they reside in ROM HyForth itself does better at initialization.
 
 =======================================================================
 
+Training data for HyForth is included in the *.FORTH files along with
+the assembly source code.  Cut-and-paste this data (carefully) a few 
+lines at a time and you will have a pretty standard Forth implementation
+in a few minutes.  There is still some fragility in the system due to 
+lack of bounds and other sanity checks, but these will be addressed as 
+the project progresses.
+
+=======================================================================
+
 My partners in this project, including Dan Struthers and others involved 
 with testing and development for the Hydra-16 hardware and ROM design 
 (https://github.com/danstruthers/hydra-16/tree/V1.8C), will be moving the 
