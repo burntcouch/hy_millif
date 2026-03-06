@@ -49,6 +49,18 @@ variable labels and jump/branch points for more clarity.
 Needless to say it is no longer 100% 'classic', according to AGSB's 
 interpretation of Forth design standards.
 
+One of the most difficult flaws in the original source, is that AGSB 
+assumes that the zero page and the page for the TIB (text input buffer at
+$0400, labeled INBUF in this version).  He also expected the zero-page area ($E0-$FF) used for most of the variables in this version to start at zero....
+
+So I wrote a routine (since I was using a ROM routine to copy the Forth binary to $0500 anyway) to zero out those two areas.
+
+The 'zeroout' code and the debugger for HyForth reside at the end of the 
+Hydra-16 'task RAM' area, above $7000.  This will probably change soon, 
+either so they reside in ROM HyForth itself does better at initialization.
+
+=======================================================================
+
 My partners in this project, including Dan Struthers and others involved 
 with testing and development for the Hydra-16 hardware and ROM design 
 (https://github.com/danstruthers/hydra-16/tree/V1.8C), will be moving the 
