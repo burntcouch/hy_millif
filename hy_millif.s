@@ -196,12 +196,12 @@ H0000 = 0
 
 ;---------------------------------------------------------------------
 ; uncomment to include the extras (sic)
-use_extras = 1 
+use_extras := 1 
 
 ; uncomment to include the extensions (sic)
-use_extensions = 1 
+use_extensions := 1 
 
-numbers = 1
+numbers := 1
 
 ;
 ;  macros for PGS stuff
@@ -392,9 +392,15 @@ okey:
     
 resolve:           ; get a token
     jsr token
+    
+.ifdef DEBUG
+    lda DFLAG
+    bne RVPSKIP    
     WCRLF_np
     lda #'P'
     jsr WRITE_CHAR
+RVPSKIP:
+.endif
 
 find:                ; load last
     lda LASTHEAP + 1
@@ -402,35 +408,34 @@ find:                ; load last
     lda LASTHEAP
     sta TEMP2
     
-@loop:              ; lsb linked list
+RESLOOP:              ; lsb linked list
     lda TEMP2
     sta WORDPTR
-;    ora TEMP2 + 1              ; verify 00 00 if at start of list
-    bne @each
+    bne RESEACH
     lda TEMP2+1
-    bne @each
-    
-;    beq abort             ; commented out becuz below
-
-.ifdef DEBUG
-    jsr DUMPREG
-.endif  
-
-    bne @each              ; PGS - did he forget this?
+;    sta WORDPTR+1
+    bne RESEACH              ; PGS - did he forget this?
                            ; MAY be the big fix.  Nothing quite
                            ; right before hand, but the logic
                            ; seemed right.
-                           ;
-;;   uncomment for feedback, comment out "beq abort" above
+                     
+                    ; no words matched, so check for valid number                     
+                    ; remember this still has to drop through 
+                    ; or jmp to WORDNOTFOUND if no match.
+                           
+                           
+WORDNOTFOUND:                           
     WCRLF_np
     lda #'?'
+    jsr WRITE_CHAR
+    lda #'!'
     jsr WRITE_CHAR
     lda #$0D
     jsr WRITE_CHAR
     lda #$0A
     jmp abort  ; end of dictionary, no more words to search, abort
 
-@each:                        ; msb linked list 
+RESEACH:                        ; msb linked list 
     lda TEMP2 + 1
     sta WORDPTR + 1           ; update next link 
     
@@ -449,7 +454,7 @@ find:                ; load last
     sec                 ; verify 
     sbc (WORDPTR), y     
     asl                 ; clean 7-bit ascii
-    bne @loop
+    bne RESLOOP
 
 ; next char
     iny
@@ -472,19 +477,32 @@ eval:
     bmi immediate      
 
 compile:
-    WCRLF_np                     ; no push CRLF
+
+.ifdef DEBUG
+    lda DFLAG
+    bne CMPSKIP    
+    WCRLF_np
     lda #'C'
     jsr WRITE_CHAR
+CMPSKIP:
+.endif
+ 
     jsr wcomma
     bcs immediate
     jmp resolve
     
 immediate:
 execute:
-    WCRLF_np                      ; no push CRLF
+
+.ifdef DEBUG
+    lda DFLAG
+    bne EXESKIP    
+    WCRLF_np
     lda #'E'
     jsr WRITE_CHAR
-
+EXESKIP:
+.endif
+    
     lda #>resolvept
     sta INSTPTR + 1
     lda #<resolvept
@@ -755,16 +773,16 @@ def_word "%R", "rplist", 0
     jmp next
 
 ;----------------------------------------------------------------------
-;  ae list a sequence of references
+;  list a sequence of references
 list:
 
-    sec
+    sec                 ; calc diff and length of list
     sbc TEMP1
     lsr
 
-    tax
+    tax                 ; hide in X
 
-    lda TEMP1 + 1
+    lda TEMP1 + 1       ; print addr of pointer
     jsr puthex
     lda TEMP1
     jsr puthex
@@ -773,7 +791,7 @@ list:
     jsr WRITE_CHAR
 
     txa
-    jsr puthex
+    jsr puthex         ; print # of entries?
 
     lda #' '
     jsr WRITE_CHAR
@@ -834,7 +852,11 @@ def_word "dump", "dump", 0
 ; ( -- ) words in dictionary, 
 def_word "words", "words", 0
 
-; load lastest
+.ifdef DEBUG
+    jsr DUMPREG
+.endif  
+
+; load last
     lda LASTHEAP + 1
     sta TEMP2 + 1
     lda LASTHEAP
@@ -846,20 +868,27 @@ def_word "words", "words", 0
     lda NEXTHEAP
     sta TEMP3
     
-@loop:
+WORDLOOP1:
+
+.ifdef DEBUG
+    jsr DUMPREG
+.endif  
+
 ; lsb linked list
     lda TEMP2
     sta TEMP1
 
 ; verify \0x0
     ora TEMP2 + 1
-    beq @ends
-
+    bne WORDSKIP1
+    jmp WORDSEND
+    
+WORDSKIP1:
 ; msb linked list
     lda TEMP2 + 1
     sta TEMP1 + 1
 
-@each:    
+ 
 
     WCRLF_np
     
@@ -883,7 +912,7 @@ def_word "words", "words", 0
     lda (TEMP1), y
     jsr puthex
 
-    ldx #(TEMP1)
+    ldx #TEMP1
     lda #2
     jsr addwx
 
@@ -894,11 +923,10 @@ def_word "words", "words", 0
 ; update
     iny
     tya
-    ldx #(TEMP1)
+    ldx #TEMP1
     jsr addwx
 
 ; show CFA
-
     lda #' '
     jsr WRITE_CHAR
     
@@ -910,13 +938,13 @@ def_word "words", "words", 0
 ; check if is a primitive
     lda TEMP1 + 1
     cmp #>ends + 1
-    bmi @continue
+    bmi WORDSCONT
 
 ; list references
     ldy #0
     jsr show_refer
 
-@continue:
+WORDSCONT:
     
     lda TEMP2
     sta TEMP3
@@ -930,13 +958,13 @@ def_word "words", "words", 0
     lda (TEMP3), y
     sta TEMP2 + 1
 
-    ldx #(TEMP3)
+    ldx #TEMP3
     lda #2
     jsr addwx
 
-    jmp @loop 
+    jmp WORDLOOP1
 
-@ends:
+WORDSEND:
     WCRLF_np
     clc  ; clean
     jmp next
@@ -957,14 +985,12 @@ show_name:
     and #$7F
     tax
 
- @loop:
+SHWNAMELOOP1:
     iny
     lda (TEMP1), y
     jsr WRITE_CHAR
     dex
-    bne @loop
-
-@ends:
+    bne SHWNAMELOOP1
     rts
 
 ;----------------------------------------------------------------------
@@ -973,7 +999,7 @@ show_refer:
 
     ldx #(TEMP1)
 
-@loop:
+SHWREFLOOP:
     lda #' '
     jsr WRITE_CHAR
 
@@ -999,12 +1025,10 @@ show_refer:
 
     lda TEMP1
     cmp TEMP3
-    bne @loop
+    bne SHWREFLOOP
     lda TEMP1 + 1
     cmp TEMP3 + 1
-    bne @loop
-
-@ends:
+    bne SHWREFLOOP
     rts
 
 ;----------------------------------------------------------------------
@@ -1076,6 +1100,78 @@ puthex:
 ;----------------------------------------------------------------------
 ; code a ASCII $FFFF hexadecimal in a byte
 ;  
+;  ASCII digits to 16-bit hex number, signed
+;
+DEC2BIN:
+    ldy #0
+    sty TEMP4
+    sty TEMP1
+    sty TEMP1 + 1
+    lda (NXTTOK), y
+    cmp #'-'
+    bne D2BSKIP3
+    inc TEMP4           ; store sign
+    iny          
+D2BLOOP:
+    pha
+    asl TEMP1           ; multx10: shift left twice,
+    rol TEMP1 + 1
+    asl TEMP1
+    rol TEMP1 + 1
+    pla    
+    clc                    
+    adc TEMP1            ; ...add again,
+    sta TEMP1
+    bcc D2BSKIP2
+    inc TEMP1 + 1
+D2BSKIP2:
+    asl TEMP1           ; ...shift left once.
+    rol TEMP1 + 1
+D2BSKIP3:
+    jsr GETDEC
+    bcs XDECERR
+    clc                ; and add next digit
+    adc TEMP1
+    bcc D2BSKIP4
+    inc TEMP1 + 1
+D2BSKIP4:
+    iny
+    lda TEMP1 + 1
+    cmp #$80
+    bcc D2BLOOP
+    jsr XDECERR
+    ldy TEMP4
+    beq D2BEXIT
+    eor #$FF          ; 1's complement
+    sta TEMP1 + 1
+    lda TEMP1 + 1
+    eor #$FF
+    sta TEMP1
+    inc TEMP1
+D2BEXIT:
+    clc
+    rts
+    
+GETDEC:
+    lda (NXTTOK), y
+    sec
+    sbc #$30
+    bmi XDECERR         ; branch and gobble rts if not a digit
+    cmp #10
+    bcc GETDECEND       ; carry set means not a digit
+    jmp XDECERR
+GETDECEND:
+    rts
+    
+XDECERR:
+    pla
+    pla
+    sec
+    rts
+
+;
+;  this APPEARS to convert four hex ASCII charactes into two BCD bytes -> TEMP1 (16 bits)
+;  sigh.  This is NOT something that '+' can work with.  Need a real binary conversion.
 number:
 
     ldy #0
@@ -1171,8 +1267,7 @@ KEYRDLP:
     jsr READ_CHAR
     bcc KEYRDLP
     sta TEMP1
-    jsr spush_0  ;
-    ;bne this    
+    jmp this    
     
 ;---------------------------------------------------------------------
 ; ( u -- ) ; tos + 1 unchanged
@@ -1448,6 +1543,9 @@ CLREXIT:
 DUMPTXT1:
         .byte "SP/PC/nv-bdizc/A/X/Y -> "
         .byte 0
+DUMPMSG1:
+        .byte "<spc> to continue, x for Wozmon, z for ZP, t for TIB, s for stack"
+        .byte 0
 
 DUMPREG:       ; dump registers safely and print
         php                     ; -3
@@ -1523,6 +1621,13 @@ DUMPSKy:
         lda   $0100,x 
         jsr   WRITE_BYTE           ; print Y
         WCRLF_np
+        ldy   #0
+DUMPLP1:                               ; print message
+        lda   DUMPMSG1, y
+        beq   DREGLP1
+        jsr   WRITE_CHAR
+        iny
+        bra   DUMPLP1        
 DREGLP1: 
         jsr   READ_CHAR              ; wait for a key
         bcc   DREGLP1
