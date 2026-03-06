@@ -1,5 +1,19 @@
 ;----------------------------------------------------------------------
 ;
+;  Patrick Struthers - March 2026
+;      - THANKS to AGSB for the starting point here....
+;
+;  The HyForth project starts here with AGSB's core Forth engine;
+;  the engine will be moved to ROM and the heap will be copied to RAM
+;  on cold start.
+;  
+;  The ulitmate purpose of working this port through is to develop a
+;  flexible and powerful operating system for the Hydra-16 of reasonable
+;  efficiency and minimal memory footprint.  HyForth will grow and 
+;  shrink in RAM footprint according to context.
+;
+; ---------------------------------------------------------------------
+;
 ;   A MilliForth for 6502 
 ;
 ;   original for the 6502, by Alvaro G. S. Barcellos, 2023
@@ -147,7 +161,7 @@
 .feature pc_assignment
 
 ;---------------------------------------------------------------------
-; macros for dictionary, makes:
+; macros for dictionary, creates code as follows:
 ;
 ;   h_name:
 ;   .word  link_to_previous_entry
@@ -165,7 +179,7 @@
 ; the entry point for code is ~name~
 .macro def_word name, label, flag
 makelabel "h_", label
-.ident(.sprintf("H%04X", hcount + 1)) = *
+.ident(.sprintf("H%04X", hcount + 1)):
 .word .ident (.sprintf ("H%04X", hcount))
 hcount .set hcount + 1
 .byte .strlen(name) + flag + 0 ; nice trick !
@@ -186,6 +200,32 @@ use_extras = 1
 
 ; uncomment to include the extensions (sic)
 use_extensions = 1 
+
+numbers = 1
+
+;
+;  macros for PGS stuff
+;
+
+BACKSPC := $08
+CR := $0D
+LF := $0A
+
+.macro WCRLF_np                ; no push of A
+       lda #CR
+       jsr WRITE_CHAR
+       lda #LF
+       jsr WRITE_CHAR
+.endmacro
+
+.macro WCRLF
+       pha
+       lda #CR
+       jsr WRITE_CHAR
+       lda #LF
+       jsr WRITE_CHAR
+       pla
+.endmacro
 
 DEBUG := 1
 
@@ -225,7 +265,7 @@ endsoff:
    .res 2
 ramstart:
    .res 2
-TEMP1:
+TEMP0:
    .res 2
 DFLAG:
    .res 1
@@ -252,10 +292,10 @@ WORDPTR:    .word $0 ; word pointer          rename WORDPTR
 
 ; free for use
 
-TEMP2:    .word $0 ; first
-TEMP3:    .word $0 ; second
-TEMP4:    .word $0 ; third    rename TEMP4
-TEMP5:    .word $0 ; fourth   rename TEMP5
+TEMP1:    .word $0 ; first
+TEMP2:    .word $0 ; second
+TEMP3:    .word $0 ; third    rename TEMP3
+TEMP4:    .word $0 ; fourth   rename TEMP4
 
 ; used, reserved
 
@@ -299,7 +339,7 @@ warm:
     lda #<h_exit
     sta LASTHEAP
 
-; next heap free cell
+; next heap free cell 
     lda #>ends + 1
     sta NEXTHEAP + 1
     lda #0
@@ -308,9 +348,9 @@ warm:
 ;---------------------------------------------------------------------
 ; supose never change
 reset:
-    ldy #>INBUF
-    sty DSPTR + 1
-    sty RTPTR + 1
+    ldy #>INBUF                 ; DS, TIB and RT all in same page
+    sty DSPTR + 1                   
+    sty RTPTR + 1                      
     sty CURBUF + 1
     sty NXTTOK + 1
 
@@ -321,7 +361,6 @@ abort:
 quit:
     ldy #<RTEND
     sty RTPTR
-
 
     ldy #0          ; reset INBUF
     sty INBUF     ; clear INBUF stuff
@@ -340,9 +379,6 @@ resolvept:
 okey:
 
 ;;   uncomment for feedback
-.ifdef DEBUG
-    jsr DUMPREG
-.endif
     lda STATUS
     bne resolve
     lda #'O'
@@ -356,26 +392,37 @@ okey:
     
 resolve:           ; get a token
     jsr token
+    WCRLF_np
     lda #'P'
     jsr WRITE_CHAR
 
 find:                ; load last
     lda LASTHEAP + 1
-    sta TEMP3 + 1
+    sta TEMP2 + 1
     lda LASTHEAP
-    sta TEMP3
+    sta TEMP2
     
 @loop:              ; lsb linked list
-    lda TEMP3
+    lda TEMP2
     sta WORDPTR
-    ora TEMP3 + 1              ; verify 00 00 if at start of list
+;    ora TEMP2 + 1              ; verify 00 00 if at start of list
+    bne @each
+    lda TEMP2+1
+    bne @each
+    
 ;    beq abort             ; commented out becuz below
 
+.ifdef DEBUG
+    jsr DUMPREG
+.endif  
+
     bne @each              ; PGS - did he forget this?
-    
+                           ; MAY be the big fix.  Nothing quite
+                           ; right before hand, but the logic
+                           ; seemed right.
+                           ;
 ;;   uncomment for feedback, comment out "beq abort" above
-    lda #'?'
-    jsr WRITE_CHAR
+    WCRLF_np
     lda #'?'
     jsr WRITE_CHAR
     lda #$0D
@@ -384,24 +431,24 @@ find:                ; load last
     jmp abort  ; end of dictionary, no more words to search, abort
 
 @each:                        ; msb linked list 
-    lda TEMP3 + 1
-    sta WORDPTR + 1                        ; update next link 
+    lda TEMP2 + 1
+    sta WORDPTR + 1           ; update next link 
     
-    ldx #WORDPTR      ; from    was (WORDPTR), no such addressing mode
-    ldy #TEMP3        ; into    was (TEMP3), no such addressing mode
+    ldx #WORDPTR        ; from    was (WORDPTR), no such addressing mode
+    ldy #TEMP2          ; into    was (TEMP2), no such addressing mode
     jsr copyfrom
-    ldy #0         ; compare words
-    lda (WORDPTR), y     ; save the flag, first byte is (size and flag) 
+    ldy #0              ; compare words
+    lda (WORDPTR), y    ; save the flag, first byte is (size and flag) 
     sta STATUS + 1
 
 ; compare chars
 @equal:
     lda (NXTTOK), y
-    cmp #32          ; space ends
+    cmp #$20            ; space ends
     beq @done
-    sec              ; verify 
+    sec                 ; verify 
     sbc (WORDPTR), y     
-    asl              ; clean 7-bit ascii
+    asl                 ; clean 7-bit ascii
     bne @loop
 
 ; next char
@@ -425,14 +472,16 @@ eval:
     bmi immediate      
 
 compile:
+    WCRLF_np                     ; no push CRLF
     lda #'C'
     jsr WRITE_CHAR
     jsr wcomma
-    bcc resolve
-
+    bcs immediate
+    jmp resolve
+    
 immediate:
 execute:
-
+    WCRLF_np                      ; no push CRLF
     lda #'E'
     jsr WRITE_CHAR
 
@@ -458,8 +507,6 @@ getline:
     pla
     ldy #0   ; leave the first
 @loop:
-
-
     sta INBUF, y  ; dummy store on first pass, overwritten
     iny
     cpy #INBUF_end
@@ -467,8 +514,14 @@ getline:
 @readlp:
     jsr READ_CHAR
     bcc @readlp
-    cmp #$0D       
+    cmp #CR      
+    beq @ends
+    cmp #BACKSPC         ; handle backspace
     bne @loop
+    dey
+    dey
+    lda INBUF, y      ; make sure prev char not overwritten
+    bra @loop
 @ends:                ; clear all if y eq \0
     lda #$20
     sta INBUF       ; start with space
@@ -478,9 +531,7 @@ getline:
 ; start it
     sta CURBUF
 
-.ifdef DEBUG
-    jsr DUMPREG
-.endif  
+
 
 ;---------------------------------------------------------------------
 ; in place every token,
@@ -517,7 +568,8 @@ token:
 ;
 ;  Hydra-16
 ; 
-; exit for emulator  
+; exit to WozMon
+; 
 byes:
     jmp $FE00
 
@@ -533,6 +585,8 @@ decwx:
 
 ;---------------------------------------------------------------------
 ; increment a word in page zero. offset by X
+;  probably not neccessary?
+;
 ;incwx:
 ;    inc 0, x
 ;    bne @ends
@@ -543,19 +597,18 @@ decwx:
 ;---------------------------------------------------------------------
 ; classic heap moves always forward
 ;
-stawrd:
-    sta WORDPTR + 1
-
+;stawrd:                             ; just for DTC version
+;    sta WORDPTR + 1
+;
 wcomma:
-    ldy #(WORDPTR)
-
+    ldy #WORDPTR                  ; dammit, quit using parens!
 comma: 
-    ldx #(NEXTHEAP)
-    ; fall throught
-
+    ldx #NEXTHEAP                 ; dammit, quit using parens!
+    ; fall through
 ;---------------------------------------------------------------------
 ; from a page zero address indexed by Y
 ; into a page zero indirect address indexed by X
+;
 copyinto:
     lda 0, y
     sta (0, x)
@@ -563,26 +616,24 @@ copyinto:
     lda 1, y
     sta (0, x)
     jmp incwx
-
 ;---------------------------------------------------------------------
 ;
 ; generics 
 ;
 ;---------------------------------------------------------------------
-spush1:
-    ldy #(TEMP2)
+spush_0:
+    ldy #TEMP1
 
 ;---------------------------------------------------------------------
 ; push a cell 
 ; from a page zero address indexed by Y
 ; into a page zero indirect address indexed by X
 spush:
-    ldx #(DSPTR)
-    ; jmp push
+    ldx #DSPTR
+                ; this does a 'jmp push'
     .byte $2c   ; mask next two bytes, nice trick !
-
 rpush:
-    ldx #(RTPTR)
+    ldx #RTPTR
 
 ;---------------------------------------------------------------------
 ; classic stack backwards
@@ -596,14 +647,14 @@ push:
     rts  
 
 ;---------------------------------------------------------------------
-spull2:
-    ldy #(TEMP3)
+spull_1:
+    ldy #TEMP2
     jsr spull
     ; fall through
 
 ;---------------------------------------------------------------------
-spull1:
-    ldy #(TEMP2)
+spull_0:
+    ldy #TEMP1
     ; fall through
 
 ;---------------------------------------------------------------------
@@ -611,12 +662,12 @@ spull1:
 ; from a page zero indirect address indexed by X
 ; into a page zero address indexed by y
 spull:
-    ldx #(DSPTR)
+    ldx #DSPTR
     ; jmp pull
     .byte $2c   ; mask next two bytes, nice trick !
 
 rpull:
-    ldx #(RTPTR)
+    ldx #RTPTR
 
 ;---------------------------------------------------------------------
 ; classic stack backwards
@@ -638,7 +689,7 @@ copyfrom:
 incwx:
     lda #01
 ;---------------------------------------------------------------------
-; add a byte to a word in page zero. offset by X
+; add a byte in A to a word in page zero. offset by X
 addwx:
     clc
     adc 0, x
@@ -649,46 +700,744 @@ addwx:
 @ends:
     rts
 
+
+;---------------------------------------------------------------------
 ;
-;  zero out $50 - $FF, meet and greet
+; the primitives, 
+; for stacks uses
+; a address, c byte ascii, w signed word, u unsigned word 
+; cs counted string < 256, sz string with nul ends
+; 
+;----------------------------------------------------------------------
+
+.ifdef use_extras
+
+;----------------------------------------------------------------------
+; extras
+;----------------------------------------------------------------------
+; ( -- ) ae exit forth
+def_word "bye", "bye", 0
+    jmp byes
+
+;----------------------------------------------------------------------
+; ( -- ) ae abort
+def_word "abort", "abort_", 0
+    jmp abort
+
+;----------------------------------------------------------------------
+; ( -- ) ae list of data stack
+def_word "%S", "splist", 0
+    lda DSPTR
+    sta TEMP1
+    lda DSPTR + 1
+    sta TEMP1 + 1
+    WCRLF_np
+    lda #'S'
+    jsr WRITE_CHAR
+    lda #DSEND
+    jsr list
+    WCRLF_np
+    jmp next
+
+;----------------------------------------------------------------------
+; ( -- ) ae list of return stack
+def_word "%R", "rplist", 0
+    lda RTPTR
+    sta TEMP1
+    lda RTPTR + 1
+    sta TEMP1 + 1
+    WCRLF_np
+    lda #'R'
+    jsr WRITE_CHAR
+    lda #RTEND
+    jsr list
+    WCRLF_np
+    jmp next
+
+;----------------------------------------------------------------------
+;  ae list a sequence of references
+list:
+
+    sec
+    sbc TEMP1
+    lsr
+
+    tax
+
+    lda TEMP1 + 1
+    jsr puthex
+    lda TEMP1
+    jsr puthex
+
+    lda #' '
+    jsr WRITE_CHAR
+
+    txa
+    jsr puthex
+
+    lda #' '
+    jsr WRITE_CHAR
+
+    txa
+    beq @ends
+
+    ldy #0
+@loop:
+    lda #' '
+    jsr WRITE_CHAR
+    iny
+    lda (TEMP1),y 
+    jsr puthex
+    dey
+    lda (TEMP1),y 
+    jsr puthex
+    iny 
+    iny
+    dex
+    bne @loop
+@ends:
+    rts
+    
+;----------------------------------------------------------------------
+; ( -- ) dumps the user dictionary
+def_word "dump", "dump", 0
+
+    lda #$0
+    sta TEMP1
+    lda #>ends + 1
+    sta TEMP1 + 1
+
+    ldx #TEMP1
+    ldy #0
+
+@loop:
+    lda (TEMP1),y
+    jsr WRITE_BYTE          ; was WRITE_CHAR
+    lda #$20
+    jsr WRITE_CHAR
+    jsr incwx
+
+    lda TEMP1
+    cmp NEXTHEAP
+    bne @loop
+
+    lda TEMP1 + 1
+    cmp NEXTHEAP + 1
+
+    bne @loop
+    
+    WCRLF_np
+    clc  ; clean
+    jmp next 
+
+;----------------------------------------------------------------------
+; ( -- ) words in dictionary, 
+def_word "words", "words", 0
+
+; load lastest
+    lda LASTHEAP + 1
+    sta TEMP2 + 1
+    lda LASTHEAP
+    sta TEMP2
+
+; load here
+    lda NEXTHEAP + 1
+    sta TEMP3 + 1
+    lda NEXTHEAP
+    sta TEMP3
+    
+@loop:
+; lsb linked list
+    lda TEMP2
+    sta TEMP1
+
+; verify \0x0
+    ora TEMP2 + 1
+    beq @ends
+
+; msb linked list
+    lda TEMP2 + 1
+    sta TEMP1 + 1
+
+@each:    
+
+    WCRLF_np
+    
+; put address
+    lda #' '
+    jsr WRITE_CHAR
+
+    lda TEMP1 + 1
+    jsr puthex
+    lda TEMP1
+    jsr puthex
+
+; put link
+    lda #' '
+    jsr WRITE_CHAR
+
+    ldy #1
+    lda (TEMP1), y
+    jsr puthex
+    dey 
+    lda (TEMP1), y
+    jsr puthex
+
+    ldx #(TEMP1)
+    lda #2
+    jsr addwx
+
+; put size + flag, name
+    ldy #0
+    jsr show_name
+
+; update
+    iny
+    tya
+    ldx #(TEMP1)
+    jsr addwx
+
+; show CFA
+
+    lda #' '
+    jsr WRITE_CHAR
+    
+    lda TEMP1 + 1
+    jsr puthex
+    lda TEMP1
+    jsr puthex
+
+; check if is a primitive
+    lda TEMP1 + 1
+    cmp #>ends + 1
+    bmi @continue
+
+; list references
+    ldy #0
+    jsr show_refer
+
+@continue:
+    
+    lda TEMP2
+    sta TEMP3
+    lda TEMP2 + 1
+    sta TEMP3 + 1
+
+    ldy #0
+    lda (TEMP3), y
+    sta TEMP2
+    iny
+    lda (TEMP3), y
+    sta TEMP2 + 1
+
+    ldx #(TEMP3)
+    lda #2
+    jsr addwx
+
+    jmp @loop 
+
+@ends:
+    WCRLF_np
+    clc  ; clean
+    jmp next
+
+;----------------------------------------------------------------------
+; ae put size and name 
+show_name:
+    lda #' '
+    jsr WRITE_CHAR
+
+    lda (TEMP1), y
+    jsr puthex
+    
+    lda #' '
+    jsr WRITE_CHAR
+
+    lda (TEMP1), y
+    and #$7F
+    tax
+
+ @loop:
+    iny
+    lda (TEMP1), y
+    jsr WRITE_CHAR
+    dex
+    bne @loop
+
+@ends:
+    rts
+
+;----------------------------------------------------------------------
+show_refer:
+; ae put references PFA ... 
+
+    ldx #(TEMP1)
+
+@loop:
+    lda #' '
+    jsr WRITE_CHAR
+
+    lda TEMP1 + 1
+    jsr puthex
+    lda TEMP1
+    jsr puthex
+
+    lda #':'
+    jsr WRITE_CHAR
+    
+    iny 
+    lda (TEMP1), y
+    jsr puthex
+    dey
+    lda (TEMP1), y
+    jsr puthex
+
+    lda #2
+    jsr addwx
+
+; check if ends
+
+    lda TEMP1
+    cmp TEMP3
+    bne @loop
+    lda TEMP1 + 1
+    cmp TEMP3 + 1
+    bne @loop
+
+@ends:
+    rts
+
+;----------------------------------------------------------------------
+;  ae seek for 'exit to ends a sequence of references
+;  max of 254 references in list
+;
+seek:
+    ldy #0
+@loop1:
+    iny
+    beq @ends
+
+    lda (TEMP1), y
+    cmp #>exit
+    bne @loop1
+
+    dey 
+    lda (TEMP1), y
+    cmp #<exit
+    beq @ends
+    
+    iny
+    bne @loop1
+
+@ends:
+    tya
+    lsr
+    clc  ; clean
+    rts
+
+
+;----------------------------------------------------------------------
+; ( u -- u ) print tos in hexadecimal, swaps order
+def_word ".", "dot", 0
+    lda #' '
+    jsr WRITE_CHAR
+    jsr spull_0
+    lda TEMP1 + 1
+    jsr puthex
+    lda TEMP1
+    jsr puthex
+    jsr spush_0
+    jmp next
+
+;----------------------------------------------------------------------
+; code a byte into ASCII hexadecimal 
+puthex:
+    pha                    ; hide it
+    lsr                    ; shift down msb nybble
+    ror
+    ror
+    ror
+    jsr @conv             ; jump below to print it
+    pla                   ; pull again
+@conv:
+    and #$0F              ; mask off msb nybble
+    ora #$30
+    cmp #$3A
+    bcc @ends
+    adc #$06
+@ends:
+    clc  ; clean
+    jsr WRITE_CHAR
+    rts                    ; sigh.  clever but susceptible to assplosion
+.endif
+
+
+.ifdef numbers
+;----------------------------------------------------------------------
+; code a ASCII $FFFF hexadecimal in a byte
+;  
+number:
+
+    ldy #0
+
+    jsr @very
+    asl
+    asl
+    asl
+    asl
+    sta TEMP1 + 1
+
+    iny 
+    jsr @very
+    ora TEMP1 + 1
+    sta TEMP1 + 1
+    
+    iny 
+    jsr @very
+    asl
+    asl
+    asl
+    asl
+    sta TEMP1
+
+    iny 
+    jsr @very
+    ora TEMP1
+    sta TEMP1
+
+    clc ; clean
+    rts
+
+@very:
+    lda (NXTTOK), y
+    sec
+    sbc #$30
+    bmi @erro           ; branch and gobble rts if not a digit
+    cmp #10
+    bcc @ends
+    sbc #$07
+    ; any valid digit, A-Z, do not care 
+@ends:
+    rts
+
+@erro:
+    pla             ; gobble rts from @very?  Dammit!
+    pla
+    rts            ; return from number w/o doing anything
+
+.endif
+
+;---------------------------------------------------------------------
+;
+; extensions
+;
+;---------------------------------------------------------------------
+.ifdef use_extensions
+
+;---------------------------------------------------------------------
+; ( w -- w/2 ) ; shift right
+def_word "2/", "shr", 0
+    jsr spull_0
+    lsr TEMP1 + 1
+    ror TEMP1
+    ;jmp this  
+    jsr spush_0
+
+;---------------------------------------------------------------------
+; ( a -- ) execute a jump to a reference at top of data stack
+def_word "exec", "exec", 0 
+    jsr spull_0
+    jmp (TEMP1)
+
+;---------------------------------------------------------------------
+; ( -- ) execute a jump to a reference at IP
+def_word ":$", "docode", 0 
+    jmp (INSTPTR)
+
+;---------------------------------------------------------------------
+; ( -- ) execute a jump to next
+def_word ";$", "donext", 0 
+    jmp next
+
+.endif
+
+;---------------------------------------------------------------------
+; core primitives minimal 
+; start of dictionary
+;---------------------------------------------------------------------
+; ( -- u ) ; tos + 1 unchanged
+def_word "key", "key", 0
+KEYRDLP:
+    jsr READ_CHAR
+    bcc KEYRDLP
+    sta TEMP1
+    jsr spush_0  ;
+    ;bne this    
+    
+;---------------------------------------------------------------------
+; ( u -- ) ; tos + 1 unchanged
+def_word "emit", "emit", 0
+    jsr spull_0
+    lda TEMP1
+    jsr WRITE_CHAR
+    jmp next  ; uncomment if carry could be set
+
+;---------------------------------------------------------------------
+; ( a w -- ) ; [a] = w
+def_word "!", "store", 0
+storew:
+    jsr spull_1
+    ldx #(TEMP2) 
+    ldy #(TEMP1) 
+    jsr copyinto
+    jmp next  ; uncomment if carry could be set
+
+;---------------------------------------------------------------------
+; ( w1 w2 -- NOT(w1 AND w2) )
+def_word "nand", "nand", 0
+    jsr spull_1
+    lda TEMP2
+    and TEMP1
+    eor #$FF            ; toggles FIRST byte okay, but...
+    sta TEMP1
+    lda TEMP2 + 1
+    and TEMP1 + 1
+    eor #$FF
+    jmp keeps  ; uncomment if carry could be set
+    ;bcc keeps ; always taken, was bcc
+
+;---------------------------------------------------------------------
+; ( w1 w2 -- w1+w2 ) 
+def_word "+", "plus", 0
+    jsr spull_1
+    clc  ; better safe than sorry
+    lda TEMP2
+    adc TEMP1
+    sta TEMP1
+    lda TEMP2 + 1
+    adc TEMP1 + 1
+    jmp keeps
+
+;---------------------------------------------------------------------
+; ( a -- w ) ; w = [a]
+def_word "@", "fetch", 0
+fetchw:
+    jsr spull_0
+    ldx #(TEMP1)
+    ldy #(TEMP2)
+    jsr copyfrom
+    ; fall through
+
+;---------------------------------------------------------------------
+copys:
+    lda 0, y
+    sta TEMP1
+    lda 1, y
+
+keeps:
+    sta TEMP1 + 1
+
+this:
+    jsr spush_0
+
+jmpnext:
+    jmp next
+    
+;---------------------------------------------------------------------
+; ( 0 -- $0000) | ( n -- $FFFF) not zero at top ?
+def_word "0#", "zeroq", 0
+    jsr spull_0
+    lda TEMP1 + 1
+    ora TEMP1
+    beq isfalse  ; is \0 ?
+istrue:
+    lda #$FF
+isfalse:
+    sta TEMP1                                                         
+    jmp keeps  
+
+;---------------------------------------------------------------------
+; ( -- state ) a variable return an reference
+def_word "s@", "state", 0 
+    lda #<STATUS
+    sta TEMP1
+    lda #>STATUS
+    ;  jmp keeps ; uncomment if stats not in page $0
+    beq keeps   ; always taken
+
+;---------------------------------------------------------------------
+def_word ";", "semis",  FLAG_IMM
+; update last, panic if colon not lead elsewhere 
+    lda BACKHEAP 
+    sta LASTHEAP
+    lda BACKHEAP + 1 
+    sta LASTHEAP + 1
+
+; stat is 'interpret'
+    lda #0
+    sta STATUS
+
+; compound words must ends with exit
+finish:
+    lda #<exit
+    sta WORDPTR
+    lda #>exit
+    sta WORDPTR + 1
+    jsr wcomma
+
+    jmp next
+    ;bcc next    ; always taken
+
+;---------------------------------------------------------------------
+def_word ":", "colon", 0
+; save here, panic if semis not follow elsewhere
+    lda NEXTHEAP
+    sta BACKHEAP 
+    lda NEXTHEAP + 1
+    sta BACKHEAP + 1 
+
+; stat is 'compile'
+    lda #1
+    sta STATUS
+
+@header:
+; copy last into (here)
+    ldy #LASTHEAP
+    jsr comma
+
+; get following token
+    jsr token
+
+; copy it
+    ldy #0
+@loop:    
+    lda (NXTTOK), y
+    cmp #32    ; stops at space
+    beq @ends
+    sta (NEXTHEAP), y
+    iny
+    bne @loop
+
+@ends:
+; update here 
+    tya
+    ldx #(NEXTHEAP)
+    jsr addwx
+
+;~~~~~~~~
+
+; done
+    jmp next
+    ;bcc next    ; always taken
+
+;----------------------------------------------------------------------
+; ( -- ) toggle debug
+def_word "debug", "debug", 0
+     lda DFLAG
+     cmp #1
+     beq @make0
+     lda #1
+     bra @store
+@make0:
+     lda #0
+@store:
+     sta DFLAG   
+     jmp next
+
+;---------------------------------------------------------------------
+; Thread Code Engine
+;
+;   INSTPTR is IP, WORDPTR is W
+;
+; for reference: 
+;
+;   nest aka enter or docol, 
+;   unnest aka exit or semis;
+;
+;---------------------------------------------------------------------
+; ( -- ) 
+def_word "exit", "exit", 0
+unnest: ; exit
+; pull, INSTPTR = (RTPTR), RTPTR += 2 
+    ldy #INSTPTR
+    jsr rpull
+
+next:
+; WORDPTR = (INSTPTR) ; INSTPTR += 2
+    ldx #INSTPTR
+    ldy #WORDPTR
+    jsr copyfrom
+
+pick:
+; compare pages (MSBs)
+    lda WORDPTR + 1
+    cmp #>ends + 1
+    bmi jump
+
+nest:   ; enter
+; push, *rp = INSTPTR, rp -=2
+    ldy #INSTPTR
+    jsr rpush
+
+    lda WORDPTR
+    sta INSTPTR
+    lda WORDPTR + 1
+    sta INSTPTR + 1
+
+    jmp next
+
+jump: 
+    jmp (WORDPTR)
+
+;~~~~~~~~
+           
+;-----------------------------------------------------------------------
+; BEWARE, MUST BE AT END! MINIMAL THREAD CODE DEPENDS ON IT!
+ends:
+
+;-----------------------------------------------------------------------
+; anything above is not a primitive
+;----------------------------------------------------------------------
+;
+;
+.org $7000
+;
+;  zero out $E0 - $FF, meet and greet
 ;  zero out INBUF also
 ;
+debug_ram:
+.res 32
+HYWELCOME:
+    .byte CR, LF
+    .byte "HyForth 0.1 03-2026"
+    .byte CR, LF, $00
 CLEAR:
-    lda #0
-    sta DFLAG
+    lda #1
+    sta DFLAG                 ; debug OFF by default
 zpclear:
-    ldx #$50
+    ldx #$E0                  ; whoops, this is all the ZP that is used
     lda #0
 zerolp:
     sta  $00,x
     inx
     bne zerolp    
-    ldx #0
-inbufzlp:
-    sta INBUF,x
+    ldx  #0
+inbufzlp:                      ; and then clear out INBUF
+    sta  INBUF,x
     inx
-    bne inbufzlp
-    
+    bne  inbufzlp
         ;  meet and greet
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    lda #'m'
-    jsr WRITE_CHAR
-    lda #'F'
-    jsr WRITE_CHAR
-    lda #'6'
-    jsr WRITE_CHAR
-    lda #'6'
-    jsr WRITE_CHAR
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR    
+    ldy  #0
+hywelclp:
+    lda  HYWELCOME,y
+    beq  CLREXIT
+    jsr  WRITE_CHAR
+    iny
+    bra  hywelclp 
+CLREXIT:    
     rts
 ;
-;    
+;
 .ifdef DEBUG 
 ;      argh.
 ;   Include DEBUG code here
@@ -710,10 +1459,7 @@ DUMPREG:       ; dump registers safely and print
         jmp   DREGNXT
 DPFCHECK:
         ldy   #0
-        lda   #$0D
-        jsr   WRITE_CHAR
-        lda   #$0A
-        jsr   WRITE_CHAR
+        WCRLF_np
 DUMPLP0:        
         lda   DUMPTXT1, y
         beq   DUMPCON
@@ -776,10 +1522,7 @@ DUMPSKy:
         dex                        ; -5
         lda   $0100,x 
         jsr   WRITE_BYTE           ; print Y
-        lda   #$0D
-        jsr   WRITE_CHAR
-        lda   #$0A
-        jsr   WRITE_CHAR
+        WCRLF_np
 DREGLP1: 
         jsr   READ_CHAR              ; wait for a key
         bcc   DREGLP1
@@ -809,32 +1552,32 @@ DUMPTIB:              ; dump TIB
         php
         pha
         ldy #0
-        sty TEMP1
+        sty TEMP0
         lda #>INBUF
-        sta TEMP1+1
+        sta TEMP0+1
         bra DSTKLP1
 
 DUMPSTACK:            ; dump STACK
         php
         pha
         ldy #0
-        sty TEMP1
+        sty TEMP0
         lda #1
-        sta TEMP1+1
+        sta TEMP0+1
         bra DSTKLP1
 DUMPZP:               ; dump ZP
         php
         pha
         ldy #0
-        sty TEMP1
-        sty TEMP1+1   
+        sty TEMP0
+        sty TEMP0+1   
 DSTKLP1:
         tya
         jsr WRITE_BYTE
         lda #':'
         jsr WRITE_CHAR
 DSTKLP2:
-        lda (TEMP1), y
+        lda (TEMP0), y
         jsr WRITE_BYTE
         lda #$20
         jsr WRITE_CHAR
@@ -844,716 +1587,31 @@ DSTKLP2:
         beq  DSTKSKL   
         bra  DSTKLP2
 DSTKSKL:
-        lda #$0D
-        jsr WRITE_CHAR
-        lda #$0A
-        jsr WRITE_CHAR
+        WCRLF_np
         tya
         bne DSTKLP1        
 DUMPSTKEND:
-        lda #$0D
-        jsr WRITE_CHAR
-        lda #$0A
-        jsr WRITE_CHAR
+        WCRLF_np
         pla
         plp
         rts
 .endif
-           
-;---------------------------------------------------------------------
-;
-; the primitives, 
-; for stacks uses
-; a address, c byte ascii, w signed word, u unsigned word 
-; cs counted string < 256, sz string with nul ends
-; 
-;----------------------------------------------------------------------
+DEBUG_END:
 
-.ifdef use_extras
-
-;----------------------------------------------------------------------
-; extras
-;----------------------------------------------------------------------
-; ( -- ) ae exit forth
-def_word "bye", "bye", 0
-    jmp byes
-
-;----------------------------------------------------------------------
-; ( -- ) ae abort
-def_word "abort", "abort_", 0
-    jmp abort
-
-;----------------------------------------------------------------------
-; ( -- ) ae list of data stack
-def_word "%S", "splist", 0
-    lda DSPTR
-    sta TEMP2
-    lda DSPTR + 1
-    sta TEMP2 + 1
-    lda #'S'
-    jsr WRITE_CHAR
-    lda #DSEND
-    jsr list
-    jmp next
-
-;----------------------------------------------------------------------
-; ( -- ) ae list of return stack
-def_word "%R", "rplist", 0
-    lda RTPTR
-    sta TEMP2
-    lda RTPTR + 1
-    sta TEMP2 + 1
-    lda #'R'
-    jsr WRITE_CHAR
-    lda #RTEND
-    jsr list
-    jmp next
-
-;----------------------------------------------------------------------
-;  ae list a sequence of references
-list:
-
-    sec
-    sbc TEMP2
-    lsr
-
-    tax
-
-    lda TEMP2 + 1
-    jsr puthex
-    lda TEMP2
-    jsr puthex
-
-    lda #' '
-    jsr WRITE_CHAR
-
-    txa
-    jsr puthex
-
-    lda #' '
-    jsr WRITE_CHAR
-
-    txa
-    beq @ends
-
-    ldy #0
-@loop:
-    lda #' '
-    jsr WRITE_CHAR
-    iny
-    lda (TEMP2),y 
-    jsr puthex
-    dey
-    lda (TEMP2),y 
-    jsr puthex
-    iny 
-    iny
-    dex
-    bne @loop
-@ends:
-    rts
-    
-;----------------------------------------------------------------------
-; ( -- ) dumps the user dictionary
-def_word "dump", "dump", 0
-
-    lda #$0
-    sta TEMP2
-    lda #>ends + 1
-    sta TEMP2 + 1
-
-    ldx #(TEMP2)
-    ldy #0
-
-@loop:
-    
-    lda (TEMP2),y
-    jsr WRITE_CHAR
-    jsr incwx
-
-    lda TEMP2
-    cmp NEXTHEAP
-    bne @loop
-
-    lda TEMP2 + 1
-    cmp NEXTHEAP + 1
-    bne @loop
-
-    clc  ; clean
-    jmp next 
-
-;----------------------------------------------------------------------
-; ( -- ) words in dictionary, 
-def_word "words", "words", 0
-
-; load lastest
-    lda LASTHEAP + 1
-    sta TEMP3 + 1
-    lda LASTHEAP
-    sta TEMP3
-
-; load here
-    lda NEXTHEAP + 1
-    sta TEMP4 + 1
-    lda NEXTHEAP
-    sta TEMP4
-    
-@loop:
-; lsb linked list
-    lda TEMP3
-    sta TEMP2
-
-; verify \0x0
-    ora TEMP3 + 1
-    beq @ends
-
-; msb linked list
-    lda TEMP3 + 1
-    sta TEMP2 + 1
-
-@each:    
-
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    
-; put address
-    lda #' '
-    jsr WRITE_CHAR
-
-    lda TEMP2 + 1
-    jsr puthex
-    lda TEMP2
-    jsr puthex
-
-; put link
-    lda #' '
-    jsr WRITE_CHAR
-
-    ldy #1
-    lda (TEMP2), y
-    jsr puthex
-    dey 
-    lda (TEMP2), y
-    jsr puthex
-
-    ldx #(TEMP2)
-    lda #2
-    jsr addwx
-
-; put size + flag, name
-    ldy #0
-    jsr show_name
-
-; update
-    iny
-    tya
-    ldx #(TEMP2)
-    jsr addwx
-
-; show CFA
-
-    lda #' '
-    jsr WRITE_CHAR
-    
-    lda TEMP2 + 1
-    jsr puthex
-    lda TEMP2
-    jsr puthex
-
-; check if is a primitive
-    lda TEMP2 + 1
-    cmp #>ends + 1
-    bmi @continue
-
-; list references
-    ldy #0
-    jsr show_refer
-
-@continue:
-    
-    lda TEMP3
-    sta TEMP4
-    lda TEMP3 + 1
-    sta TEMP4 + 1
-
-    ldy #0
-    lda (TEMP4), y
-    sta TEMP3
-    iny
-    lda (TEMP4), y
-    sta TEMP3 + 1
-
-    ldx #(TEMP4)
-    lda #2
-    jsr addwx
-
-    jmp @loop 
-
-@ends:
-    clc  ; clean
-    jmp next
-
-;----------------------------------------------------------------------
-; ae put size and name 
-show_name:
-    lda #' '
-    jsr WRITE_CHAR
-
-    lda (TEMP2), y
-    jsr puthex
-    
-    lda #' '
-    jsr WRITE_CHAR
-
-    lda (TEMP2), y
-    and #$7F
-    tax
-
- @loop:
-    iny
-    lda (TEMP2), y
-    jsr WRITE_CHAR
-    dex
-    bne @loop
-
-@ends:
-    rts
-
-;----------------------------------------------------------------------
-show_refer:
-; ae put references PFA ... 
-
-    ldx #(TEMP2)
-
-@loop:
-    lda #' '
-    jsr WRITE_CHAR
-
-    lda TEMP2 + 1
-    jsr puthex
-    lda TEMP2
-    jsr puthex
-
-    lda #':'
-    jsr WRITE_CHAR
-    
-    iny 
-    lda (TEMP2), y
-    jsr puthex
-    dey
-    lda (TEMP2), y
-    jsr puthex
-
-    lda #2
-    jsr addwx
-
-; check if ends
-
-    lda TEMP2
-    cmp TEMP4
-    bne @loop
-    lda TEMP2 + 1
-    cmp TEMP4 + 1
-    bne @loop
-
-@ends:
-    rts
-
-;----------------------------------------------------------------------
-;  ae seek for 'exit to ends a sequence of references
-;  max of 254 references in list
-;
-seek:
-    ldy #0
-@loop1:
-    iny
-    beq @ends
-
-    lda (TEMP2), y
-    cmp #>exit
-    bne @loop1
-
-    dey 
-    lda (TEMP2), y
-    cmp #<exit
-    beq @ends
-    
-    iny
-    bne @loop1
-
-@ends:
-    tya
-    lsr
-    clc  ; clean
-    rts
-
-;----------------------------------------------------------------------
-; ( u -- u ) print tos in hexadecimal, swaps order
-def_word ".", "dot", 0
-    lda #' '
-    jsr WRITE_CHAR
-    jsr spull1
-    lda TEMP2 + 1
-    jsr puthex
-    lda TEMP2
-    jsr puthex
-    jsr spush1
-    jmp next
-
-;----------------------------------------------------------------------
-; code a byte in ASCII hexadecimal 
-puthex:
-    pha
-    lsr
-    ror
-    ror
-    ror
-    jsr @conv
-    pla
-@conv:
-    and #$0F
-    ora #$30
-    cmp #$3A
-    bcc @ends
-    adc #$06
-@ends:
-    clc  ; clean
-    jmp WRITE_CHAR
-
-.endif
-
-
-.ifdef numbers
-;----------------------------------------------------------------------
-; code a ASCII $FFFF hexadecimal in a byte
-;  
-number:
-
-    ldy #0
-
-    jsr @very
-    asl
-    asl
-    asl
-    asl
-    sta TEMP2 + 1
-
-    iny 
-    jsr @very
-    ora TEMP2 + 1
-    sta TEMP2 + 1
-    
-    iny 
-    jsr @very
-    asl
-    asl
-    asl
-    asl
-    sta TEMP2
-
-    iny 
-    jsr @very
-    ora TEMP2
-    sta TEMP2
-
-    clc ; clean
-    rts
-
-@very:
-    lda (NXTTOK), y
-    sec
-    sbc #$30
-    bmi @erro
-    cmp #10
-    bcc @ends
-    sbc #$07
-    ; any valid digit, A-Z, do not care 
-@ends:
-    rts
-
-@erro:
-    pla
-    pla
-    rts
-
-.endif
-
-;---------------------------------------------------------------------
-;
-; extensions
-;
-;---------------------------------------------------------------------
-.ifdef use_extensions
-
-;---------------------------------------------------------------------
-; ( w -- w/2 ) ; shift right
-def_word "2/", "shr", 0
-    jsr spull1
-    lsr TEMP2 + 1
-    ror TEMP2
-    jmp this
-
-;---------------------------------------------------------------------
-; ( a -- ) execute a jump to a reference at top of data stack
-def_word "exec", "exec", 0 
-    jsr spull1
-    jmp (TEMP2)
-
-;---------------------------------------------------------------------
-; ( -- ) execute a jump to a reference at IP
-def_word ":$", "docode", 0 
-    jmp (INSTPTR)
-
-;---------------------------------------------------------------------
-; ( -- ) execute a jump to next
-def_word ";$", "donext", 0 
-    jmp next
-
-.endif
-
-;---------------------------------------------------------------------
-; core primitives minimal 
-; start of dictionary
-;---------------------------------------------------------------------
-; ( -- u ) ; tos + 1 unchanged
-def_word "key", "key", 0
-KEYRDLP:
-    jsr READ_CHAR
-    bcc KEYRDLP
-    sta TEMP2
-    ; jmp this  ; uncomment if char could be \0
-    bne this    ; always taken
-    
-;---------------------------------------------------------------------
-; ( u -- ) ; tos + 1 unchanged
-def_word "emit", "emit", 0
-    jsr spull1
-    lda TEMP2
-    jsr WRITE_CHAR
-    ; jmp next  ; uncomment if carry could be set
-    bcc jmpnext ; always taken
-
-;---------------------------------------------------------------------
-; ( a w -- ) ; [a] = w
-def_word "!", "store", 0
-storew:
-    jsr spull2
-    ldx #(TEMP3) 
-    ldy #(TEMP2) 
-    jsr copyinto
-    ; jmp next  ; uncomment if carry could be set
-    bcc jmpnext ; always taken
-
-;---------------------------------------------------------------------
-; ( w1 w2 -- NOT(w1 AND w2) )
-def_word "nand", "nand", 0
-    jsr spull2
-    lda TEMP3
-    and TEMP2
-    eor #$FF
-    sta TEMP2
-    lda TEMP3 + 1
-    and TEMP2 + 1
-    eor #$FF
-    ; jmp keeps  ; uncomment if carry could be set
-    bcc keeps ; always taken
-
-;---------------------------------------------------------------------
-; ( w1 w2 -- w1+w2 ) 
-def_word "+", "plus", 0
-    jsr spull2
-    clc  ; better safe than sorry
-    lda TEMP3
-    adc TEMP2
-    sta TEMP2
-    lda TEMP3 + 1
-    adc TEMP2 + 1
-    jmp keeps
-
-;---------------------------------------------------------------------
-; ( a -- w ) ; w = [a]
-def_word "@", "fetch", 0
-fetchw:
-    jsr spull1
-    ldx #(TEMP2)
-    ldy #(TEMP3)
-    jsr copyfrom
-    ; fall throught
-
-;---------------------------------------------------------------------
-copys:
-    lda 0, y
-    sta TEMP2
-    lda 1, y
-
-keeps:
-    sta TEMP2 + 1
-
-this:
-    jsr spush1
-
-jmpnext:
-    jmp next
-
-;---------------------------------------------------------------------
-; ( 0 -- $0000) | ( n -- $FFFF) not zero at top ?
-def_word "0#", "zeroq", 0
-    jsr spull1
-    lda TEMP2 + 1
-    ora TEMP2
-    beq isfalse  ; is \0 ?
-istrue:
-    lda #$FF
-isfalse:
-    sta TEMP2                                                         
-    jmp keeps  
-
-;---------------------------------------------------------------------
-; ( -- state ) a variable return an reference
-def_word "s@", "state", 0 
-    lda #<STATUS
-    sta TEMP2
-    lda #>STATUS
-    ;  jmp keeps ; uncomment if stats not in page $0
-    beq keeps   ; always taken
-
-;---------------------------------------------------------------------
-def_word ";", "semis",  FLAG_IMM
-; update last, panic if colon not lead elsewhere 
-    lda BACKHEAP 
-    sta LASTHEAP
-    lda BACKHEAP + 1 
-    sta LASTHEAP + 1
-
-; stat is 'interpret'
-    lda #0
-    sta STATUS
-
-; compound words must ends with exit
-finish:
-    lda #<exit
-    sta WORDPTR
-    lda #>exit
-    sta WORDPTR + 1
-    jsr wcomma
-
-    ; jmp next
-    bcc next    ; always taken
-
-;---------------------------------------------------------------------
-def_word ":", "colon", 0
-; save here, panic if semis not follow elsewhere
-    lda NEXTHEAP
-    sta BACKHEAP 
-    lda NEXTHEAP + 1
-    sta BACKHEAP + 1 
-
-; stat is 'compile'
-    lda #1
-    sta STATUS
-
-@header:
-; copy last into (here)
-    ldy #(LASTHEAP)
-    jsr comma
-
-; get following token
-    jsr token
-
-; copy it
-    ldy #0
-@loop:    
-    lda (NXTTOK), y
-    cmp #32    ; stops at space
-    beq @ends
-    sta (NEXTHEAP), y
-    iny
-    bne @loop
-
-@ends:
-; update here 
-    tya
-    ldx #(NEXTHEAP)
-    jsr addwx
-
-;~~~~~~~~
-
-; done
-    ; jmp next
-    bcc next    ; always taken
-
-;---------------------------------------------------------------------
-; Thread Code Engine
-;
-;   INSTPTR is IP, WORDPTR is W
-;
-; for reference: 
-;
-;   nest aka enter or docol, 
-;   unnest aka exit or semis;
-;
-;---------------------------------------------------------------------
-; ( -- ) 
-def_word "exit", "exit", 0
-unnest: ; exit
-; pull, INSTPTR = (RTPTR), RTPTR += 2 
-    ldy #(INSTPTR)
-    jsr rpull
-
-next:
-; WORDPTR = (INSTPTR) ; INSTPTR += 2
-    ldx #(INSTPTR)
-    ldy #(WORDPTR)
-    jsr copyfrom
-
-pick:
-; compare pages (MSBs)
-    lda WORDPTR + 1
-    cmp #>ends + 1
-    bmi jump
-
-nest:   ; enter
-; push, *rp = INSTPTR, rp -=2
-    ldy #(INSTPTR)
-    jsr rpush
-
-    lda WORDPTR
-    sta INSTPTR
-    lda WORDPTR + 1
-    sta INSTPTR + 1
-
-    jmp next
-
-jump: 
-    jmp (WORDPTR)
-
-;~~~~~~~~
-
-;-----------------------------------------------------------------------
-; BEWARE, MUST BE AT END! MINIMAL THREAD CODE DEPENDS ON IT!
-ends:
-
-;-----------------------------------------------------------------------
-; anything above is not a primitive
-;----------------------------------------------------------------------
+.org $800
 FFILL:
-        .res $342
+        .res $14F
 COPYMAIN = main - CODESTART + INROM
 RAMST = main
 COPYENDS = ends - CODESTART + INROM
 
+DBGST = ends - CODESTART + INROM
+DBGRAMST = debug_ram
+DBGEND = DBGST + DEBUG_END - debug_ram
+
 COPYTORAM:
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    ;
+    WCRLF_np
+    WCRLF_np
     lda #>COPYMAIN
     sta mainoff+1  
     lda #<COPYMAIN
@@ -1571,6 +1629,8 @@ COPYTORAM:
     sta ramstart
     jsr WRITE_BYTE
     ;
+    ldx  #2
+DEBUGTORAM:
     ldy  #0
 COPYLOOP:
     lda (mainoff),y
@@ -1585,31 +1645,44 @@ SKIP1:
     lda #'.'
     jsr WRITE_CHAR
     inc mainoff
+    bne SKIP2
+    inc mainoff + 1
+SKIP2:
     inc ramstart
-    bne COPYLOOP
-    inc mainoff+1
+    bne SKIP3
     inc ramstart+1
-    ldy #0
-    beq COPYLOOP
+SKIP3:
+    bra COPYLOOP
 COPYEXIT:
     lda ramstart+1
     jsr WRITE_BYTE
     lda ramstart
     jsr WRITE_BYTE
-     lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR   
+    WCRLF_np
+;
+;       now do debug stuff
+    dex
+    beq  CPEND
+    lda #>DBGST
+    sta mainoff+1  
+    lda #<DBGST
+    sta mainoff
+    ;
+    lda #<DBGEND
+    sta endsoff
+    lda #>DBGEND
+    sta endsoff+1
+    ;
+    lda #>DBGRAMST
+    sta ramstart+1
+    jsr WRITE_BYTE
+    lda #<DBGRAMST
+    sta ramstart
+    jsr WRITE_BYTE
+    bra DEBUGTORAM
+CPEND:    
     jmp $FE00
 ;
-;             zero out zp $50-$FF
-ZEROZERO:
-    ldx #0
-    lda #0
-ZEROLP:
-    sta  $50,x
-    inx
-    bne ZEROLP
-    rts
+
 
     
