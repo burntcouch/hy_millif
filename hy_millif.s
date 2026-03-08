@@ -250,7 +250,6 @@ werrloop:
     lda (TEMP0),y
     beq werrend
     iny
- ;   jsr DUMPREG
     jsr WRITE_CHAR
     bra werrloop
 werrend:    
@@ -437,20 +436,18 @@ reset:
     sty DSPTR + 1
     ldy #>RT    
     sty RTPTR + 1 
+    lda #1                       ; DEBUG OFF by default
+    sta DFLAG    
     
 abort:
-    lda #0
-    sta DFLAG
-  ;  jsr DUMPREG
-    
-    jsr wrterror                 ; print any error messages
-
     ldy #<DSEND
     sty DSPTR
 quit:
     ldy #<RTEND
     sty RTPTR
 
+errrtn:                         ; does NOT clear stacks
+    jsr wrterror                 ; print any error messages   
     ldy #0          ; reset INBUF
     sty INBUF     ; clear INBUF stuff
     sty CURBUF    ; clear cursor  (pointer into INBUF)
@@ -471,14 +468,12 @@ okey:
 resolve:           ; get a token
     jsr token
     
-.ifdef DEBUG
     lda DFLAG
     bne RVPSKIP    
     WCRLF_np
     lda #'P'
     jsr WRITE_CHAR
 RVPSKIP:
-.endif
 
 find:                ; load last
     lda LASTHEAP + 1
@@ -503,7 +498,7 @@ WORDNOTFOUND:
     ;WSEQ NOT_OKAY            ; "?!" message
     lda #ERR_UKW
     sta ERRFLAG
-    jmp abort  ; end of dictionary, no more words to search, abort
+    jmp errrtn ; end of dictionary, no more words to search, abort
 
 RESEACH:                        ; msb linked list 
     lda TEMP2 + 1
@@ -548,14 +543,12 @@ eval:
 
 compile:
 
-.ifdef DEBUG
     lda DFLAG
     bne CMPSKIP    
     WCRLF_np
     lda #'C'
     jsr WRITE_CHAR
 CMPSKIP:
-.endif
  
     jsr wcomma
     bcs immediate
@@ -564,14 +557,13 @@ CMPSKIP:
 immediate:
 execute:
 
-.ifdef DEBUG
     lda DFLAG
     bne EXESKIP    
     WCRLF_np
     lda #'E'
     jsr WRITE_CHAR
 EXESKIP:
-.endif
+
     
     lda #>resolvept
     sta INSTPTR + 1
@@ -726,7 +718,7 @@ ptrerr:
     sta ERRFLAG
     pla
     pla
-    jmp abort
+    jmp errrtn
 ;
 ;---------------------------PULL a cell------------------------------------
 spull_1:                    ; pull from TEMP2 from stack
@@ -794,10 +786,8 @@ wrterror:
     lda ERRFLAG
     beq ERREND
     asl a
-;    jsr DUMPREG
     clc
     adc #<err_jumptable
-;    jsr DUMPREG
     sta ERRPTR
     bcc ERRSKIP
     inc ERRPTR+1
@@ -958,10 +948,6 @@ def_word "dump", "dump", 0
 ; ( -- ) words in dictionary, 
 def_word "words", "words", 0
 
-.ifdef DEBUG
-    jsr DUMPREG
-.endif  
-
 ; load last
     lda LASTHEAP + 1
     sta TEMP2 + 1
@@ -975,10 +961,6 @@ def_word "words", "words", 0
     sta TEMP3
     
 WORDLOOP1:
-
-.ifdef DEBUG
-    jsr DUMPREG
-.endif  
 
 ; lsb linked list
     lda TEMP2
@@ -1209,80 +1191,111 @@ mult16:
 ;  ASCII digits to 16-bit hex number, signed
 ;
 DEC2BIN:
-    ldy #0
+    ldy #0          ; zero everthing out
     sty TEMP4
     sty TEMP1
+    sty TEMP2
     sty TEMP1 + 1
-    lda (NXTTOK), y
+    sty TEMP2 + 1
+D2BSPCSKIP:
+    lda (NXTTOK), y     ; get lead char of token
+    cmp #$20            ; skip spaces and/or length
+    bpl D2BSKIP0        ; if GREATER than $20, then it's maybe a digit
+    iny
+    bra D2BSPCSKIP
+D2BSKIP0:
     cmp #'-'
-    bne D2BSKIP3
+    bne D2BLOOP        ; if is NOT a minus, get to rest of token
     inc TEMP4           ; store sign
-    iny          
-D2BLOOP:
-    pha
+    iny   
+D2BLOOP:               
+    jsr GETDEC         ; get next digit, if there is one.  should return 0-9
+    
+    jsr DUMPREG
+    
+    bcs D2BERR         ; if carry set, not a digit, bail out
+    cmp #$20
+    beq D2BCONT        ; end of conversion!
+    pha                ; push digit for later
+              ;---do the math----
     asl TEMP1           ; multx10: shift left twice,
     rol TEMP1 + 1
     asl TEMP1
     rol TEMP1 + 1
-    pla    
-    clc                    
+    lda TEMP2            ; TEMP1 before shift
+    clc                 
     adc TEMP1            ; ...add again,
     sta TEMP1
-    bcc D2BSKIP2
-    inc TEMP1 + 1
+    lda TEMP2 + 1
+    adc TEMP1 + 1
+    sta TEMP1 + 1
 D2BSKIP2:
-    asl TEMP1           ; ...shift left once.
+    asl TEMP1           ; ...shift left once more
     rol TEMP1 + 1
 D2BSKIP3:
-    jsr GETDEC
-    bcs XDECERR
-    clc                ; and add next digit
+    pla                ; get next digit back              
+    clc                ; ...and add.
     adc TEMP1
+    sta TEMP1
+    sta TEMP2           ; save to TEMP2
     bcc D2BSKIP4
     inc TEMP1 + 1
 D2BSKIP4:
     iny
     lda TEMP1 + 1
-    cmp #$80
-    bcc D2BLOOP
-    jsr XDECERR
+    sta TEMP2 + 1       ; save to TEMP2
+    cmp #$80              ; check to see if too large
+    bcc D2BLOOP           ; less than, so far good, do more math
+    jmp D2BERR            ; otherwise error, again
 D2BCONT:    
-    ldy TEMP4
-    beq D2BEXIT
+    ldy TEMP4          ; now do the '-'
+    beq D2BEXIT       ; well, then don't
     eor #$FF          ; 1's complement
     sta TEMP1 + 1
     lda TEMP1 + 1
-    eor #$FF
+    eor #$FF         ; invert second digit
     sta TEMP1
-    inc TEMP1
-    bcc D2BEXIT
-    inc TEMP1 + 1
+    inc TEMP1        ; and add one
+    bne D2BEXIT      ; did that overflow to 0?
+    inc TEMP1 + 1    ; inc if so
 D2BEXIT:
-    clc
-    jmp keeps
+    jsr DUMPREG
+    
+    jsr WRITE_BYTE
+    lda TEMP1
+    jsr WRITE_BYTE
+
+    clc                  ; clear carry, all okay
+    jsr spush_0          ; push TEMP1 on stack
+    jmp next             ; on to next token?
+D2BERR:                   
+    jsr DUMPREG
+    lda #'!'
+    jsr WRITE_CHAR
+
+    lda   #ERR_NUM       ; was an error, report it
+    sta   ERRFLAG
+    sec                  ; set carry for helpfulness
+    rts                  ; not sure where we're returning to tho...
     
 GETDEC:
-    lda (NXTTOK), y
+    clc
+    lda (NXTTOK), y   
     cmp #$20
-    bne  GETDECCONT
-    pla
-    pla
-    jmp  D2BCONT
-GETDECCONT:
+    beq  GETDECCLR         ; end of token
+    bcc  GETDECERR
     sec
-    sbc #$30
-    bmi XDECERR         ; branch and gobble rts if not a digit
-    cmp #10
-    bcc GETDECEND       ; carry set means not a digit
-    jmp XDECERR
+    sbc #$30               ; subtract to zero
+    cmp #10               ; digit?
+    bcc GETDECEND          ; yep, carry is clear
+GETDECERR:
+    sec                   ; nope, set carry for error
 GETDECEND:
     rts
-    
-XDECERR:
-    pla
-    pla
-    sec               ; carry set means error
+GETDECCLR:
+    clc
     rts
+    
 
 ;
 ;  this APPEARS to convert four hex ASCII charactes into two BCD bytes -> TEMP1 (16 bits)
