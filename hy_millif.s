@@ -187,7 +187,7 @@ hcount .set hcount + 1
   .byte name
 makelabel "", label
 .endmacro
-;
+;---------------------------------------------------------------------
 ;  macros for PGS stuff
 ;
 .macro WCRLF_np                ; no push of A
@@ -226,7 +226,7 @@ makelabel "", label
       pla
 .endmacro
 
-;
+;---------------------------------------------------------------------
 ;  for error messages
 ;
 .macro ERR_entry errmsg
@@ -265,16 +265,28 @@ emcount .set 0             ; # of error messages set up
 H0000 = 0
 
 ;---------------------------------------------------------------------
+;               CONFIGURATION OPTIONS
+;---------------------------------------------------------------------
 ; uncomment to include the extras (sic)
 use_extras := 1 
 
 ; uncomment to include the extensions (sic)
 use_extensions := 1 
 
+; number conversion
 numbers := 1
 
-;
-;  for PGS hyforth stuff
+;OLDNUM := 1     ; enable prev DEC2BIN
+
+;   AGSB hex2bin code (nested in 'numbers' above)
+; NUMBERS2 := 1        
+
+DEBUG := 1
+
+HYWORDS := 1      ; add in some hardcoded numbers / logic
+
+;---------------------------------------------------------------------
+;                     for PGS hyforth stuff
 ;
 ; error codes
 ;
@@ -282,13 +294,16 @@ ERR_PTR := $01
 ERR_NUM := $02
 ERR_MEM := $03
 ERR_UKW := $04
-
+;
+;---------------------------------------------------------------------
+;                CHARACTER CONSTANTS
 BACKSPC := $08
 CR := $0D
 LF := $0A
 
-DEBUG := 1
-
+;
+;                 CORE ENGINE CONSTANTS
+;
 CODESTART = $0600
 
 ; cell size, two bytes, 16-bit
@@ -299,16 +314,14 @@ FLAG_IMM = 1<<7
 ; terminal input buffer, forward
 ; getline, token, skip, scan, depends on page boundary
 ; INBUF = $0400  (see segment STACKS below)
-
-; reserve 255 bytes, (72 is enough) 
 ; moves forwards
 INBUF_end = $FF
 
-; data stack, 36 cells,
+; data stacks
 ; moves backwards, push decreases before copy
 DSEND = $7E
 
-; return stack, 36 cells, 
+; return stack
 ; moves backwards, push decreases before copy
 RTEND = $FE
 
@@ -321,10 +334,14 @@ WRITE_BYTE = $F8A3
 INROM = $A000
 
 ;----------------------------------------------------------------------
-; no values here or must be a BSS
+;                   ZERO PAGE USAGE
+;----------------------------------------------------------------------
 .segment "ZP"
 .org $D0
 
+;
+;                   HyForth setup stuff
+;
 mainoff: 
    .res 2          ; ptr to start of main
 endsoff:
@@ -339,14 +356,14 @@ ERRFLAG:
    .res 1          ; error type, 0 = none
 ERRPTR:
    .res 2          ; ptr to mitigation/message
+NUMGOT:
+   .res 1
 SCRATCH:        
-   .res 4          ; spare space
-
-nil:  ; empty for fixed reference
-
-; as user variables
-; order matters for hello_world.forth !
-
+   .res 3          ; spare space
+;  
+;          make sure we're at $E0 now...
+;  
+nil:
 ; internal Forth 
 
 STATUS:   .word $0 ; state at lsb, last size+flag at msb
@@ -372,23 +389,22 @@ TEMP4:    .word $0 ; fourth   rename TEMP4
 
 NXTTOK:   .word $0 ; next token in tib (INBUF)
 BACKHEAP:   .word $0 ; hold 'here while compile
-
+;
+;  $FC - $FF in reserve
+;
 .segment "STACKS"
 .org $0400
 INBUF:
       .res 256
-DS:
+DS:                          ; data stack (S)
       .res 126
       .res 2
-RT:
+RT:                          ; return stack (R)
       .res 126
       .res 2
       
 .segment "CODE" 
-
 ;
-; leave space for page zero, hard stack, 
-; and buffer, locals, forth stacks
 ;
 ; ************ the real deal...
 ;
@@ -466,16 +482,19 @@ okey:
    ; WSEQ_np RSV_OKAY   ;-- more trouble than worth right now
     
 resolve:           ; get a token
+    lda #0
+    sta NUMGOT               ; toggle NUMGOT OFF
     jsr token
     
-    lda DFLAG
+    lda DFLAG                 ; DEBUG
     bne RVPSKIP    
     WCRLF_np
     lda #'P'
-    jsr WRITE_CHAR
+    jsr WRITE_CHAR            ; DEBUG
+    
 RVPSKIP:
 
-find:                ; load last
+find:                ; load last word on heap
     lda LASTHEAP + 1
     sta TEMP2 + 1
     lda LASTHEAP
@@ -490,8 +509,9 @@ RESLOOP:              ; lsb linked list
                            ; right before hand, but the logic
                            ; seemed right.
                      
-    jsr DEC2BIN      ; no words matched, so check for valid number    
-    bcc RESEACH      ; and put on stack
+;     jsr DEC2BIN      ; no words matched, so check for valid number    
+;     bcc RESEACH      ; and put on stack
+;     bcc resolve
                     ; or jmp to WORDNOTFOUND if no match.                          
                            
 WORDNOTFOUND:                          
@@ -536,40 +556,34 @@ eval:
 ; executing ? if == \0
     lda STATUS   
     beq execute
-
+;
 ; immediate ? if < \0
     lda STATUS + 1   
     bmi immediate      
-
+;
 compile:
-
     lda DFLAG
     bne CMPSKIP    
     WCRLF_np
     lda #'C'
-    jsr WRITE_CHAR
+    jsr WRITE_CHAR   
 CMPSKIP:
- 
     jsr wcomma
     bcs immediate
     jmp resolve
-    
+;    
 immediate:
 execute:
-
     lda DFLAG
     bne EXESKIP    
     WCRLF_np
     lda #'E'
-    jsr WRITE_CHAR
+    jsr WRITE_CHAR 
 EXESKIP:
-
-    
     lda #>resolvept
     sta INSTPTR + 1
     lda #<resolvept
     sta INSTPTR
-
     jmp pick
 
 ;---------------------------------------------------------------------
@@ -636,6 +650,8 @@ token:
     sty CURBUF 
 
 @done:  ; find size and store it
+    jsr DUMPREG
+    
     tya
     sec
     sbc NXTTOK     
@@ -643,7 +659,58 @@ token:
     dey
     sta INBUF, y  ; store size for counted string 
     sty NXTTOK
-    clc     ; clean - setup token
+    ;
+    ;lda NUMGOT  ; now check to see if this is 2nd time through after # conversion
+   ; beq GETEMNUMS  ; nope
+    ;lda #0
+    ;sta NUMGOT    ; toggle it on again
+    ;bra TOKENEND
+    ;
+    ; Do number conversions here, before looking at word list; will be push on stack
+    ;
+GETEMNUMS:
+      ldy #0
+      sty TEMP4          ; minus flag is clear at moment
+      lda (NXTTOK),y
+      tax                ; store size
+      iny              
+      lda (NXTTOK),y         
+      cmp #'-'               ; is it a minus sign?
+      bne TOKSKIP
+      inc TEMP4              ; make as minus
+      iny
+      dex
+      lda (NXTTOK),y 
+TOKSKIP:
+      cmp #$30               ; is it more than or equal to $30
+      bcc TOKENEND 
+      cpx #1                 ; length of what's left one or less?
+      beq TOKENEND
+      bcc TOKENEND           ; if so, already hardcoded
+      cmp #$3A               ; is it less than #$3A
+      bcs TOKENEND         
+      jsr DEC2BIN2             ; remove jmp to next in DEC2BIN, enable rts there, disable NUM error
+      bcs TOKENEND            ; if not a valid word, it will just pass it thru
+          ; may not be neccessary, so...
+      ;ldy CURBUF              ; else, get CURBUF
+      ;sty NXTTOK              ; update NXTTOK
+     ; inc NUMGOT                ; and toggle token pass on
+      ldy #0
+      lda (NXTTOK),y
+      tax
+      inx      
+      lda #$20
+TOKCLR:
+      sta (NXTTOK),y
+      iny
+      dex
+      bne TOKCLR
+      jmp token               ; and get next token
+                              ; maybe works?
+TOKENEND:
+    jsr DUMPREG
+    
+    clc     ; clean - setup token  
     rts
 
 ;---------------------------------------------------------------------
@@ -684,9 +751,12 @@ copyinto:
 ; generics 
 ;
 ;------------------------PUSH a cell--------------------------------
+spush_1:
+    ldy #TEMP2
+    jmp spush        
 spush_0:             ; push TEMP1 to stack, probably top of stack
     ldy #TEMP1
-
+     ; fall through
 ;---------------------------------------------------------------------
 ; PUSH a cell 
 ; from a page zero address indexed by Y
@@ -879,15 +949,15 @@ list:
     tax                 ; hide in X
 
     lda TEMP1 + 1       ; print addr of pointer
-    jsr puthex
+    jsr WRITE_BYTE
     lda TEMP1
-    jsr puthex
+    jsr WRITE_BYTE
 
     lda #' '
     jsr WRITE_CHAR
 
     txa
-    jsr puthex         ; print # of entries?
+    jsr WRITE_BYTE         ; print # of entries?
 
     lda #' '
     jsr WRITE_CHAR
@@ -901,10 +971,10 @@ list:
     jsr WRITE_CHAR
     iny
     lda (TEMP1),y 
-    jsr puthex
+    jsr WRITE_BYTE
     dey
     lda (TEMP1),y 
-    jsr puthex
+    jsr WRITE_BYTE
     iny 
     iny
     dex
@@ -983,9 +1053,9 @@ WORDSKIP1:
     jsr WRITE_CHAR
 
     lda TEMP1 + 1
-    jsr puthex
+    jsr WRITE_BYTE
     lda TEMP1
-    jsr puthex
+    jsr WRITE_BYTE
 
 ; put link
     lda #' '
@@ -993,10 +1063,10 @@ WORDSKIP1:
 
     ldy #1
     lda (TEMP1), y
-    jsr puthex
+    jsr WRITE_BYTE
     dey 
     lda (TEMP1), y
-    jsr puthex
+    jsr WRITE_BYTE
 
     ldx #TEMP1
     lda #2
@@ -1017,9 +1087,9 @@ WORDSKIP1:
     jsr WRITE_CHAR
     
     lda TEMP1 + 1
-    jsr puthex
+    jsr WRITE_BYTE
     lda TEMP1
-    jsr puthex
+    jsr WRITE_BYTE
 
 ; check if is a primitive
     lda TEMP1 + 1
@@ -1062,7 +1132,7 @@ show_name:
     jsr WRITE_CHAR
 
     lda (TEMP1), y
-    jsr puthex
+    jsr WRITE_BYTE
     
     lda #' '
     jsr WRITE_CHAR
@@ -1090,19 +1160,19 @@ SHWREFLOOP:
     jsr WRITE_CHAR
 
     lda TEMP1 + 1
-    jsr puthex
+    jsr WRITE_BYTE
     lda TEMP1
-    jsr puthex
+    jsr WRITE_BYTE
 
     lda #':'
     jsr WRITE_CHAR
     
     iny 
     lda (TEMP1), y
-    jsr puthex
+    jsr WRITE_BYTE
     dey
     lda (TEMP1), y
-    jsr puthex
+    jsr WRITE_BYTE
 
     lda #2
     jsr addwx
@@ -1153,38 +1223,120 @@ def_word ".", "dot", 0
     jsr WRITE_CHAR
     jsr spull_0
     lda TEMP1 + 1
-    jsr puthex
+    jsr WRITE_BYTE
     lda TEMP1
-    jsr puthex
+    jsr WRITE_BYTE
     jsr spush_0
     jmp next
 
 ;----------------------------------------------------------------------
 ; code a byte into ASCII hexadecimal 
-puthex:
-    pha                    ; hide it
-    lsr                    ; shift down msb nybble
-    ror
-    ror
-    ror
-    jsr @conv             ; jump below to print it
-    pla                   ; pull again
-@conv:
-    and #$0F              ; mask off msb nybble
-    ora #$30
-    cmp #$3A
-    bcc @ends
-    adc #$06
-@ends:
-    clc  ; clean
-    jsr WRITE_CHAR
-    rts                    ; sigh.  clever but susceptible to assplosion
+;puthex:
+;    pha                    ; hide it
+;    lsr                    ; shift down msb nybble
+;    ror
+;    ror
+;    ror
+;    jsr @conv             ; jump below to print it
+;    pla                   ; pull again
+;@conv:
+;    and #$0F              ; mask off msb nybble
+;    ora #$30
+;    cmp #$3A
+;    bcc @ends
+;    adc #$06
+;@ends:
+;    clc  ; clean
+;    jsr WRITE_CHAR
+;    jsr WRITE_BYTE
+;    rts                    ; sigh.  clever but susceptible to assplosion
 
 .ifdef numbers
 
 mult16:
+       rts
 
+DEC2BIN2:   ; Y is index to TXTPTR, X is length
+    lda #0          ; zero everthing out
+    ; TEMP4 already set with minus flag
+    sta TEMP1
+    sta TEMP2
+    sta TEMP1 + 1
+    sta TEMP2 + 1
+D2LOOP:               
+    jsr GETDEC2         ; get next digit, if there is one.  should return 0-9
+    
+    jsr DUMPREG
+    
+    bcs D_ERR         ; if carry set, not a digit, bail out
+    pha                ; push digit for later
+              ;---do the math----
+    asl TEMP1           ; multx10: shift left twice,
+    rol TEMP1 + 1
+    asl TEMP1
+    rol TEMP1 + 1
+    lda TEMP2            ; TEMP1 before shift
+    clc                 
+    adc TEMP1            ; ...add again,
+    sta TEMP1
+    lda TEMP2 + 1
+    adc TEMP1 + 1
+    sta TEMP1 + 1
+DSKIP2:
+    asl TEMP1           ; ...shift left once more
+    rol TEMP1 + 1
+D2SKIP3:
+    pla                ; get next digit back              
+    clc                ; ...and add.
+    adc TEMP1
+    sta TEMP1
+    sta TEMP2           ; save to TEMP2
+    bcc D2SKIP4
+    inc TEMP1 + 1
+D2SKIP4:
+    iny 
+    lda TEMP1 + 1
+    sta TEMP2 + 1       ; save to TEMP2
+    dex
+    beq D2CONT
+    cmp #$80              ; check to see if too large
+    bcc D2LOOP           ; less than, so far good, do more math
+    sec
+    
+    jsr DUMPREG
 
+    jmp D_ERR            ; otherwise error, again
+D2CONT:    
+    ldy TEMP4          ; now do the '-'
+    beq D2EXIT       ; well, then don't
+    lda TEMP1
+    eor #$FF          ; 1's complement
+    sta TEMP1
+    lda TEMP1+1
+    eor #$FF         ; invert second digit
+    sta TEMP1+1
+    inc TEMP1        ; and add one
+    bne D2EXIT      ; did that overflow to 0?
+    inc TEMP1 + 1    ; inc if so
+D2EXIT:
+    jsr spush_0          ; push TEMP1 on stack
+    clc            ; maybe spush messes with carry?
+D_ERR:
+    rts
+
+GETDEC2:
+    clc
+    lda (NXTTOK), y   
+    sec
+    sbc #$30               ; subtract to zero
+    cmp #10               ; digit?    can substitute variable for BASE here.
+    bcc GTEND          ; yep, carry is clear
+GT_ERR:
+    sec                   ; nope, set carry for error
+GTEND:
+    rts
+
+.ifdef OLDNUM
 ;----------------------------------------------------------------------
 ; code a ASCII decimal into a # and put on stack
 ;  
@@ -1214,8 +1366,6 @@ D2BLOOP:
     jsr DUMPREG
     
     bcs D2BERR         ; if carry set, not a digit, bail out
-    cmp #$20
-    beq D2BCONT        ; end of conversion!
     pha                ; push digit for later
               ;---do the math----
     asl TEMP1           ; multx10: shift left twice,
@@ -1250,40 +1400,38 @@ D2BSKIP4:
 D2BCONT:    
     ldy TEMP4          ; now do the '-'
     beq D2BEXIT       ; well, then don't
+    lda TEMP1
     eor #$FF          ; 1's complement
-    sta TEMP1 + 1
-    lda TEMP1 + 1
-    eor #$FF         ; invert second digit
     sta TEMP1
+    lda TEMP1+1
+    eor #$FF         ; invert second digit
+    sta TEMP1+1
     inc TEMP1        ; and add one
     bne D2BEXIT      ; did that overflow to 0?
     inc TEMP1 + 1    ; inc if so
 D2BEXIT:
-    jsr DUMPREG
-    
-    jsr WRITE_BYTE
-    lda TEMP1
-    jsr WRITE_BYTE
+    jsr DUMPREG 
 
     clc                  ; clear carry, all okay
     jsr spush_0          ; push TEMP1 on stack
-    jmp next             ; on to next token?
+    jmp next             ; on to next token?  - do this if DEC2Bin is LAST token check
+;    rts                   ; variant that avoids next; use this if DEC2BIN is FIRST token check
 D2BERR:                   
     jsr DUMPREG
     lda #'!'
     jsr WRITE_CHAR
 
-    lda   #ERR_NUM       ; was an error, report it
-    sta   ERRFLAG
+    lda   #ERR_NUM          ; was an error, report it  -- don't use if first check after token retreive
+    sta   ERRFLAG           ; put these back in if this is LAST token check
     sec                  ; set carry for helpfulness
     rts                  ; not sure where we're returning to tho...
     
 GETDEC:
     clc
     lda (NXTTOK), y   
-    cmp #$20
-    beq  GETDECCLR         ; end of token
-    bcc  GETDECERR
+ ;   cmp #$20
+ ;   beq  GETDECCLR         ; end of token
+ ;   bcc  GETDECERR
     sec
     sbc #$30               ; subtract to zero
     cmp #10               ; digit?
@@ -1292,14 +1440,17 @@ GETDECERR:
     sec                   ; nope, set carry for error
 GETDECEND:
     rts
-GETDECCLR:
-    clc
-    rts
-    
+;GETDECCLR:
+;    pla
+;    pla
+;    jmp D2BCONT
 
 ;
 ;  this APPEARS to convert four hex ASCII charactes into two BCD bytes -> TEMP1 (16 bits)
 ;  sigh.  This is NOT something that '+' can work with.  Need a real binary conversion.
+.endif   ; OLDNUM
+
+.ifdef NUMBERS2
 number:
 
     ldy #0
@@ -1348,8 +1499,10 @@ number:
     pla             ; gobble rts from @very?  Dammit!
     pla
     rts            ; return from number w/o doing anything
+    
+.endif    ; NUMBERS2
 
-.endif
+.endif    ; numbers
 
 ;---------------------------------------------------------------------
 ;
@@ -1364,8 +1517,7 @@ def_word "2/", "shr", 0
     jsr spull_0
     lsr TEMP1 + 1
     ror TEMP1
-    ;jmp this  
-    jsr spush_0
+    jmp this  
 
 ;---------------------------------------------------------------------
 ; ( a -- ) execute a jump to a reference at top of data stack
@@ -1568,6 +1720,10 @@ def_word "debug", "debug", 0
      sta DFLAG   
      jmp next
 
+;---------------------ADD IN EXTRA HARDCODED LOGIC / NUMERALS---------
+.ifdef HYWORDS
+   .include "hywords.s"
+.endif
 ;---------------------------------------------------------------------
 ; Thread Code Engine
 ;
@@ -1675,7 +1831,7 @@ DUMPTXT1:
         .byte 0
 DUMPMSG1:
         .byte "<spc> to continue, x for Wozmon, z for ZP, t for TIB, s for stack"
-        .byte 0
+        .byte $0D, $0A, 0
 
 DUMPREG:       ; dump registers safely and print
         php                     ; -3
