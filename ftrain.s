@@ -2,28 +2,28 @@
 ;  training data
 ;
 ftrain_0:
-.byte ": -1 s@ s@ nand s@ nand ;"
-.byte 0
-.byte ": 0 -1 -1 nand ;"
-.byte 0
-.byte ": 1 -1 -1 + -1 nand ;"
-.byte 0
-.byte ": 2 1 1 + ;"
-.byte 0
-.byte ": 4 2 2 + ;"
-.byte 0
-.byte ": 6 2 4 + ;"
-.byte 0
+;.byte ": -1 s@ s@ nand s@ nand ;"
+;.byte 0
+;.byte ": 0 -1 -1 nand ;"
+;.byte 0
+;.byte ": 1 -1 -1 + -1 nand ;"
+;.byte 0
+;.byte ": 2 1 1 + ;"
+;.byte 0
+;.byte ": 4 2 2 + ;"
+;.byte 0
+;.byte ": 6 2 4 + ;"
+;.byte 0
 .byte ": >in s@ 2 + ;"
 .byte 0
-.byte ": latest s@ 4 + ;"
+.byte ": last s@ 4 + ;"
 .byte 0
 .byte ": here s@ 6 + ;"
 .byte 0
-.byte ": 8 6 2 + ;"
-.byte 0
-.byte ": 10 6 4 + ;"
-.byte 0
+;.byte ": 8 6 2 + ;"
+;.byte 0
+;.byte ": 10 6 4 + ;"
+;.byte 0
 .byte ": sp s@ 8 + ;"
 .byte 0
 .byte ": rp s@ 10 + ;"
@@ -46,8 +46,8 @@ ftrain_0:
 .byte 0
 .byte ": over sp @ 2 + @ ;"
 .byte 0
-.byte ": swap over over sp @ 6 + ! sp @ 2 + ! ;"
-.byte 0
+;.byte ": swap over over sp @ 6 + ! sp @ 2 + ! ;"
+;.byte 0
 .byte ": 2dup over over ;"
 .byte 0
 .byte ": 2drop drop drop ;"
