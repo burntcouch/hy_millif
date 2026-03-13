@@ -30,9 +30,11 @@ LATEST CHANGES:
     Decimal to 'word' conversions now working fine, and binary/hex are just around the 
   corner.  Per design, none of these will work as bare words inside a compiled word,
   but we are working on hardcoding literals (both numbers and strings).
+     SIZE-WISE:  with all of the new hardcoded words and the number conversions, the RAM code (engine, primitives and words) comes in at around 3K, with a lot of scope for optimization.  Very promising if the other essential things like branch, IF/THEN, DO/LOOP, BEGIN...UNTIL/WHILE etc, as well as literals and CREATE can all be wedged-in.
+     LOAD and SAVE for both hardcoded and compiled words also need to be done.  Just hoping this stays under 8K at this point; ROM conversion down the road a bit, but will help.
 </pre>
--------------------------------------------------------------
--------------------------------------------------------------
+-------------------------------------------------------------<p>
+-------------------------------------------------------------<p>
   
 <pre>
 INSTALLATION:
