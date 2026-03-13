@@ -23,7 +23,7 @@ LATEST CHANGES:
   swap; xS (clear data stack); <, >, >=, <=, =, <>; not, and, or, xor, neg; .C (prints
    two characters packed in word).  I renamed the following:  .S / .R for %S / %R; << 
    and >> for asl / lsr - these latter now do multiple bit shifts, a la:
-          ( w n -- w<<n )  and same for >>
+          ( w n -- w&lt;&lt;n )  and similar for &gt;&gt;
 -------------------------------------------------------------
 </pre>
 <pre>
