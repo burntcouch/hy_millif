@@ -415,12 +415,12 @@ main:
 ;
 ;  various handy strings
 ;   
-RSV_OKAY:
-    .byte "....OK"
-    .byte 0
-NOT_OKAY:
-    .byte " ?!?"
-    .byte 0  
+;RSV_OKAY:
+;    .byte "....OK"
+;    .byte 0
+;NOT_OKAY:
+;    .byte " ?!?"
+;    .byte 0  
 cold:
     cld
     jsr CLEAR          ; zero out zero page
@@ -504,15 +504,7 @@ RESLOOP:              ; lsb linked list
     lda TEMP2
     sta WORDPTR
     ora TEMP2+1             ; only zero if both are zero
-    bne RESEACH              ; PGS - did he forget this?
-                           ; MAY be the big fix.  Nothing quite
-                           ; right before hand, but the logic
-                           ; seemed right.
-                     
-;     jsr DEC2BIN      ; no words matched, so check for valid number    
-;     bcc RESEACH      ; and put on stack
-;     bcc resolve
-                    ; or jmp to WORDNOTFOUND if no match.                          
+    bne RESEACH              ; PGS - did he forget this?                       
                            
 WORDNOTFOUND:                          
     ;WSEQ NOT_OKAY            ; "?!" message
@@ -660,12 +652,6 @@ token:
     sta INBUF, y  ; store size for counted string 
     sty NXTTOK
     ;
-    ;lda NUMGOT  ; now check to see if this is 2nd time through after # conversion
-   ; beq GETEMNUMS  ; nope
-    ;lda #0
-    ;sta NUMGOT    ; toggle it on again
-    ;bra TOKENEND
-    ;
     ; Do number conversions here, before looking at word list; will be push on stack
     ;
 GETEMNUMS:
@@ -682,19 +668,53 @@ GETEMNUMS:
       dex
       lda (NXTTOK),y 
 TOKSKIP:
+      cmp #'%'
+      bne TOKHEX
+      iny
+      dex
+      cpx #1        ; only one digit?  hardcoded, skip below
+      beq TOKENEND
+      lda (NXTTOK),y
+      cmp #$32
+      bcc TOKENEND
+      jsr BIN2BIN
+      bcs TOKENEND
+      jmp TOKCLR0
+TOKHEX:
+      cmp #'$'
+      bne TOKDEC
+      iny
+      dex
+      cpx #1
+      beq TOKENEND   ; only one digit?  hardcoded, skip below
+      lda (NXTTOK),y
+      cmp #$47        ; less than 'G'?
+      bcs TOKENEND
+      cmp #$3A       ; more than ':'
+      bcc TOKH1
+      cmp #$41       ; more than/= 'A'
+      bcc TOKENEND  ; if set, is A-F
+      jsr HEX2BIN
+      bcs TOKENEND
+      jmp TOKCLR0
+TOKH1:
+      cmp #$30        ; is it 0-9?
+      bcc TOKENEND
+      jsr HEX2BIN
+      bcs TOKENEND
+      jmp TOKCLR0
+TOKDEC:
       cmp #$30               ; is it more than or equal to $30
       bcc TOKENEND 
       cpx #1                 ; length of what's left one or less?
       beq TOKENEND
       bcc TOKENEND           ; if so, already hardcoded
-      cmp #$3A               ; is it less than #$3A
-      bcs TOKENEND         
+      cmp #$3A
+      bcs TOKENEND
       jsr DEC2BIN2             ; remove jmp to next in DEC2BIN, enable rts there, disable NUM error
       bcs TOKENEND            ; if not a valid word, it will just pass it thru
           ; may not be neccessary, so...
-      ;ldy CURBUF              ; else, get CURBUF
-      ;sty NXTTOK              ; update NXTTOK
-     ; inc NUMGOT                ; and toggle token pass on
+TOKCLR0:
       ldy #0
       lda (NXTTOK),y
       tax
@@ -731,10 +751,10 @@ decwx:
 ; classic heap moves always forward
 ;
 wcomma:
-    ldy #WORDPTR                  ; dammit, quit using parens!
+    ldy #WORDPTR                  ; copy addr at WORDPTR, change addr fld NEXTHEAP points to
 comma: 
-    ldx #NEXTHEAP                 ; dammit, quit using parens!
-    ; fall through
+    ldx #NEXTHEAP                 ; Y has source of address, change addr fld NEXTHEAP points to
+    ; fall through - to?  copyinto, then rts
 ;---------------------------------------------------------------------
 ; from a page zero address indexed by Y
 ; into a page zero indirect address indexed by X
@@ -745,14 +765,17 @@ copyinto:
     jsr incwx
     lda 1, y
     sta (0, x)
-    jmp incwx
+    jmp incwx                        ; incwx ends with rts!
 ;---------------------------------------------------------------------
 ;
 ; generics 
 ;
 ;------------------------PUSH a cell--------------------------------
+spush_2:
+    ldy #TEMP3       ; push TEMP3 on top
+    jmp spush
 spush_1:
-    ldy #TEMP2
+    ldy #TEMP2       ; push TEMP2 on top
     jmp spush        
 spush_0:             ; push TEMP1 to stack, probably top of stack
     ldy #TEMP1
@@ -764,13 +787,13 @@ spush_0:             ; push TEMP1 to stack, probably top of stack
 spush:
     ldx #DSPTR
     lda DSPTR
-    cmp #<DS
-    beq ptrerr
+    cmp #<DS                ; ditto
+    beq ptrerr              ; ditto
     jmp push
 rpush:
     ldx #RTPTR
-    lda RTPTR
-    cmp #<RT
+    lda RTPTR               ; ditto
+    cmp #<RT                ; ditto
     beq ptrerr
 ;---------------------------------------------------------------------
 ; classic stack backwards
@@ -791,14 +814,18 @@ ptrerr:
     jmp errrtn
 ;
 ;---------------------------PULL a cell------------------------------------
-spull_1:                    ; pull from TEMP2 from stack
+;
+spull_2:
+    ldy #TEMP3              ; pull TEMP3 from top
+    jmp spull
+;
+spull_1:                    ; pull TEMP2 from top
     ldy #TEMP2
-    jsr spull
-    ; fall through
+    jmp spull                 ; why was it jsr?
 
 ;---------------------------------------------------------------------
 spull_0:
-    ldy #TEMP1             ; pull from TEMP1 from stack
+    ldy #TEMP1             ; pull TEMP1 from top of DS
     ; fall through
 
 ;-------------------------------------------------------
@@ -807,15 +834,15 @@ spull_0:
 ; into a page zero address indexed by y
 spull:
     ldx #DSPTR
-    lda DSPTR
-    cmp #DSEND
-    beq ptrerr
+    lda DSPTR         ; pointer bounds checking
+    cmp #DSEND        ; ditto
+    beq ptrerr        ; ditto
     jmp pull
 rpull:
     ldx #RTPTR
-    lda RTPTR
-    cmp #RTEND
-    beq ptrerr
+    lda RTPTR        ; pointer bounds checking
+    cmp #RTEND        ; ditto
+    beq ptrerr        ; ditto
 
 ;---------------------------------------------------------------------
 ; classic stack backwards
@@ -910,7 +937,7 @@ def_word "abort", "abort_", 0
 
 ;----------------------------------------------------------------------
 ; ( -- ) ae list of data stack
-def_word "%S", "splist", 0
+def_word ".S", "splist", 0       ; changed from %S
     lda DSPTR
     sta TEMP1
     lda DSPTR + 1
@@ -925,7 +952,7 @@ def_word "%S", "splist", 0
 
 ;----------------------------------------------------------------------
 ; ( -- ) ae list of return stack
-def_word "%R", "rplist", 0
+def_word ".R", "rplist", 0       ; changed from %R
     lda RTPTR
     sta TEMP1
     lda RTPTR + 1
@@ -1217,7 +1244,7 @@ seek:
 
 
 ;----------------------------------------------------------------------
-; ( u -- u ) print tos in hexadecimal, swaps order
+; ( u -- u ) print top of DS in hexadecimal in MSB:LSB form
 def_word ".", "dot", 0
     lda #' '
     jsr WRITE_CHAR
@@ -1226,35 +1253,33 @@ def_word ".", "dot", 0
     jsr WRITE_BYTE
     lda TEMP1
     jsr WRITE_BYTE
-    jsr spush_0
-    jmp next
-
-;----------------------------------------------------------------------
-; code a byte into ASCII hexadecimal 
-;puthex:
-;    pha                    ; hide it
-;    lsr                    ; shift down msb nybble
-;    ror
-;    ror
-;    ror
-;    jsr @conv             ; jump below to print it
-;    pla                   ; pull again
-;@conv:
-;    and #$0F              ; mask off msb nybble
-;    ora #$30
-;    cmp #$3A
-;    bcc @ends
-;    adc #$06
-;@ends:
-;    clc  ; clean
-;    jsr WRITE_CHAR
-;    jsr WRITE_BYTE
-;    rts                    ; sigh.  clever but susceptible to assplosion
+    jmp this      ; 'this' includes jsr spush_0 and next
+    
+; ( u -- u ) print top of DS in ascii, two bytes, msb first
+def_word ".C", "cdot", 0
+    jsr spull_0
+    lda TEMP1 + 1
+    jsr WRITE_CHAR
+    lda TEMP1
+    jsr WRITE_CHAR
+    jmp this       ; 'this' includes jsr spush_0 and next
+;
+;-----------------------   NUMBER CONVERSIONS
+;
 
 .ifdef numbers
 
-mult16:
-       rts
+BIN2BIN:
+    lda #'B'
+    jsr WRITE_CHAR
+    sec
+    rts
+
+HEX2BIN:
+    lda #'H'
+    jsr WRITE_CHAR
+    sec
+    rts
 
 DEC2BIN2:   ; Y is index to TXTPTR, X is length
     lda #0          ; zero everthing out
@@ -1336,119 +1361,9 @@ GT_ERR:
 GTEND:
     rts
 
-.ifdef OLDNUM
-;----------------------------------------------------------------------
-; code a ASCII decimal into a # and put on stack
-;  
-;  ASCII digits to 16-bit hex number, signed
-;
-DEC2BIN:
-    ldy #0          ; zero everthing out
-    sty TEMP4
-    sty TEMP1
-    sty TEMP2
-    sty TEMP1 + 1
-    sty TEMP2 + 1
-D2BSPCSKIP:
-    lda (NXTTOK), y     ; get lead char of token
-    cmp #$20            ; skip spaces and/or length
-    bpl D2BSKIP0        ; if GREATER than $20, then it's maybe a digit
-    iny
-    bra D2BSPCSKIP
-D2BSKIP0:
-    cmp #'-'
-    bne D2BLOOP        ; if is NOT a minus, get to rest of token
-    inc TEMP4           ; store sign
-    iny   
-D2BLOOP:               
-    jsr GETDEC         ; get next digit, if there is one.  should return 0-9
-    
-    jsr DUMPREG
-    
-    bcs D2BERR         ; if carry set, not a digit, bail out
-    pha                ; push digit for later
-              ;---do the math----
-    asl TEMP1           ; multx10: shift left twice,
-    rol TEMP1 + 1
-    asl TEMP1
-    rol TEMP1 + 1
-    lda TEMP2            ; TEMP1 before shift
-    clc                 
-    adc TEMP1            ; ...add again,
-    sta TEMP1
-    lda TEMP2 + 1
-    adc TEMP1 + 1
-    sta TEMP1 + 1
-D2BSKIP2:
-    asl TEMP1           ; ...shift left once more
-    rol TEMP1 + 1
-D2BSKIP3:
-    pla                ; get next digit back              
-    clc                ; ...and add.
-    adc TEMP1
-    sta TEMP1
-    sta TEMP2           ; save to TEMP2
-    bcc D2BSKIP4
-    inc TEMP1 + 1
-D2BSKIP4:
-    iny
-    lda TEMP1 + 1
-    sta TEMP2 + 1       ; save to TEMP2
-    cmp #$80              ; check to see if too large
-    bcc D2BLOOP           ; less than, so far good, do more math
-    jmp D2BERR            ; otherwise error, again
-D2BCONT:    
-    ldy TEMP4          ; now do the '-'
-    beq D2BEXIT       ; well, then don't
-    lda TEMP1
-    eor #$FF          ; 1's complement
-    sta TEMP1
-    lda TEMP1+1
-    eor #$FF         ; invert second digit
-    sta TEMP1+1
-    inc TEMP1        ; and add one
-    bne D2BEXIT      ; did that overflow to 0?
-    inc TEMP1 + 1    ; inc if so
-D2BEXIT:
-    jsr DUMPREG 
-
-    clc                  ; clear carry, all okay
-    jsr spush_0          ; push TEMP1 on stack
-    jmp next             ; on to next token?  - do this if DEC2Bin is LAST token check
-;    rts                   ; variant that avoids next; use this if DEC2BIN is FIRST token check
-D2BERR:                   
-    jsr DUMPREG
-    lda #'!'
-    jsr WRITE_CHAR
-
-    lda   #ERR_NUM          ; was an error, report it  -- don't use if first check after token retreive
-    sta   ERRFLAG           ; put these back in if this is LAST token check
-    sec                  ; set carry for helpfulness
-    rts                  ; not sure where we're returning to tho...
-    
-GETDEC:
-    clc
-    lda (NXTTOK), y   
- ;   cmp #$20
- ;   beq  GETDECCLR         ; end of token
- ;   bcc  GETDECERR
-    sec
-    sbc #$30               ; subtract to zero
-    cmp #10               ; digit?
-    bcc GETDECEND          ; yep, carry is clear
-GETDECERR:
-    sec                   ; nope, set carry for error
-GETDECEND:
-    rts
-;GETDECCLR:
-;    pla
-;    pla
-;    jmp D2BCONT
-
 ;
 ;  this APPEARS to convert four hex ASCII charactes into two BCD bytes -> TEMP1 (16 bits)
 ;  sigh.  This is NOT something that '+' can work with.  Need a real binary conversion.
-.endif   ; OLDNUM
 
 .ifdef NUMBERS2
 number:
@@ -1512,18 +1427,41 @@ number:
 extensions:
 
 ;---------------------------------------------------------------------
-; ( w -- w/2 ) ; shift right
-def_word "2/", "shr", 0
+; ( w n -- w >> n ) ; shift right
+def_word ">>", "shr", 0
+    jsr spull_1
+    lda TEMP2
+    beq SRZERO
     jsr spull_0
+SRLOOP:
     lsr TEMP1 + 1
     ror TEMP1
-    jmp this  
+    dec TEMP2
+    bne SRLOOP
+    jmp this         ; 'this' includes jsr spush_0 and next
+SRZERO:
+    jmp next
+    
+; ( w n -- w << n ) ; shift left
+def_word "<<", "shl", 0
+    jsr spull_1
+    lda TEMP2
+    beq SLZERO
+    jsr spull_0
+SLLOOP:
+    asl TEMP1
+    rol TEMP1 + 1
+    dec TEMP2
+    bne SLLOOP
+    jmp this         ; 'this' includes jsr spush_0 and next
+SLZERO:
+    jmp next
 
 ;---------------------------------------------------------------------
 ; ( a -- ) execute a jump to a reference at top of data stack
 def_word "exec", "exec", 0 
     jsr spull_0
-    jmp (TEMP1)
+    jmp (TEMP1)        ; assumes an address on top of DS
 
 ;---------------------------------------------------------------------
 ; ( -- ) execute a jump to a reference at IP
@@ -1532,10 +1470,8 @@ def_word ":$", "docode", 0
 
 ;---------------------------------------------------------------------
 ; ( -- ) execute a jump to next
-def_word ";$", "donext", 0 
+def_word ";$", "donext", 0        ; look in training lib to see how used
     jmp next
-
-
 
 ;---------------------------------------------------------------------
 ; core primitives minimal 
@@ -1550,7 +1486,7 @@ KEYRDLP:
     jsr READ_CHAR
     bcc KEYRDLP
     sta TEMP1
-    jmp this    
+    jmp this         ; 'this' includes jsr spush_0 and next    
     
 ;---------------------------------------------------------------------
 ; ( u -- ) ; tos + 1 unchanged
@@ -1561,19 +1497,21 @@ def_word "emit", "emit", 0
     jmp next  ; uncomment if carry could be set
 
 ;---------------------------------------------------------------------
-; ( a w -- ) ; [a] = w
-def_word "!", "store", 0
+; ( w a -- ) ; [a] = w    (w is word, a is an address)          
+def_word "!", "store", 0 
 storew:
-    jsr spull_1
-    ldx #TEMP2
-    ldy #TEMP1
-    jsr copyinto
+    jsr spull_1             ; get address, store in TEMP2
+    jsr spull_0             ; get data, store in TEMP1
+    ldx #TEMP2              ;  [a]
+    ldy #TEMP1              ;   w
+    jsr copyinto            ; copy TEMP2 stuff to addr in TEMP1
     jmp next  ; uncomment if carry could be set
 
 ;---------------------------------------------------------------------
 ; ( w1 w2 -- NOT(w1 AND w2) )
 def_word "nand", "nand", 0
     jsr spull_1             ; load TEMP1 from stack
+    jsr spull_0
     lda TEMP2
     and TEMP1
     eor #$FF            ; toggles FIRST byte okay, but...
@@ -1581,49 +1519,63 @@ def_word "nand", "nand", 0
     lda TEMP2 + 1
     and TEMP1 + 1
     eor #$FF
-     ; sta TEMP1 + 1 at 'keeps'
+     ; sta TEMP1 + 1 at 'keeps', then jsr spush_0 and 'next'
     jmp keeps  ; uncomment if carry could be set
 
 ;---------------------------------------------------------------------
 ; ( w1 w2 -- w1+w2 ) 
 def_word "+", "plus", 0
-    jsr spull_1        ; load TEMP1 from stack
+    jsr spull_1        ; load TEMP2 from stack
+    jsr spull_0        ; then TEMP1
     clc         
     lda TEMP2
     adc TEMP1
     sta TEMP1
     lda TEMP2 + 1
-    adc TEMP1 + 1     ; sta TEMP1 + 1 at 'keeps'
+    adc TEMP1 + 1     
+       ;  ; sta TEMP1 + 1 at 'keeps', then jsr spush_0 and 'next'
     jmp keeps
 
+; ( w1 w2 -- w1-w2 )          
+def_word "-", "minus", 0
+    jsr spull_1        ; get TEMP 2 from stack
+    jsr spull_0        ; then TEMP 1       
+    sec        
+    lda TEMP1
+    sbc TEMP2
+    sta TEMP1
+    lda TEMP1 + 1
+    sbc TEMP2 + 1     
+       ;  ; sta TEMP1 + 1 at 'keeps', then jsr spush_0 and 'next'
+    jmp keeps    
+    
 ;---------------------------------------------------------------------
-; ( a -- w ) ; w = [a]
-def_word "@", "fetch", 0
+; ( a -- w ) ; w = [a]     
+def_word "@", "fetch", 0      ; replace addr of data on top of DS, with data pointed to
 fetchw:
-    jsr spull_0
-    ldx #(TEMP1)
-    ldy #(TEMP2)
-    jsr copyfrom
-    ; fall through
+    jsr spull_0             ; get addr from DS
+    ldx #TEMP1
+    ldy #TEMP2
+    jsr copyfrom            ; copies cell from addr in TEMP1 to TEMP2
+    ; fall through         ; fall through: copies TEMP2 back into TEMP1, and pushes on stack
 
 ;---------------------------------------------------------------------
 copys:
-    lda 0, y
+    lda 0, y               
     sta TEMP1
     lda 1, y
-
 keeps:
     sta TEMP1 + 1
 
 this:
-    jsr spush_0
+    jsr spush_0             ; then pushes on stack?
 
 jmpnext:
     jmp next
     
 ;---------------------------------------------------------------------
-; ( 0 -- $0000) | ( n -- $FFFF) not zero at top ?
-def_word "0#", "zeroq", 0
+; ( 0 -- $0000) | ( n -- $FFFF)  normalize boolean - change top to $0000 if zero, $FFFF of not
+def_word "nb", "normbool", 0
     jsr spull_0
     lda TEMP1 + 1
     ora TEMP1
@@ -1631,16 +1583,16 @@ def_word "0#", "zeroq", 0
 istrue:
     lda #$FF
 isfalse:
-    sta TEMP1                                                         
-    jmp keeps  
+    sta TEMP1             ; keeps includes sta TEMP +1, then jsr spush_0, then jmp next                                           
+    jmp keeps            ; urgh.  if zero on top of DS, push back zero; otherwise push $FF
 
 ;---------------------------------------------------------------------
-; ( -- state ) a variable return an reference
+; ( -- state ) pushes addr of status word on stack?
 def_word "s@", "state", 0 
     lda #<STATUS
     sta TEMP1
     lda #>STATUS
-    jmp keeps   ; always taken
+    jmp keeps   ; pushes addr of status word on stack?
 
 ;---------------------------------------------------------------------
 def_word ";", "semis",  FLAG_IMM
@@ -1660,7 +1612,7 @@ finish:
     sta WORDPTR
     lda #>exit
     sta WORDPTR + 1
-    jsr wcomma
+    jsr wcomma                  ; change NEXTHEAP to point to addr of 'exit'
 
     jmp next
 
@@ -1679,10 +1631,14 @@ def_word ":", "colon", 0
 @header:
 ; copy last into (here)
     ldy #LASTHEAP
-    jsr comma
+    jsr comma                    ; change NEXTHEAP to point to LASTHEAP
 
 ; get following token
     jsr token
+    ;
+    ;  this is where literals COULD be handled.  Better
+    ;    to have a 'lit' word tho.
+    ;
 
 ; copy it
     ldy #0
