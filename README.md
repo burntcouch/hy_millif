@@ -17,6 +17,24 @@
   shrink in RAM footprint according to context.<p>
 <p>
 <pre>
+LATEST CHANGES:
+    A lot of the 'training' words in the my_bf.FORTH file have now been hardcoded, 
+  include digits 0-9, -1 to -9, $A-F, %0 and %1 (binary digits); drop, dup, rot, over, 
+  swap; xS (clear data stack); <, >, >=, <=, =, <>; not, and, or, xor, neg; .C (prints
+   two characters packed in word).  I renamed the following:  .S / .R for %S / %R; << 
+   and >> for asl / lsr - these latter now do multiple bit shifts, a la:
+          ( w n -- w<<n )  and same for >>
+-------------------------------------------------------------
+</pre>
+<pre>
+    Decimal to 'word' conversions now working fine, and binary/hex are just around the 
+  corner.  Per design, none of these will work as bare words inside a compiled word,
+  but we are working on hardcoding literals (both numbers and strings).
+</pre>
+-------------------------------------------------------------
+-------------------------------------------------------------
+  
+<pre>
 INSTALLATION:
 This is a very simple system, so....it is a little bit messy to set up 
   right now.
