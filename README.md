@@ -47,8 +47,11 @@ This is a very simple system, so....it is a little bit messy to set up
   right now.
 
 Essentially, we want to generate a RAM image of the running HyForth image
-at $0500 by switching to the ROM, running the COPYTORAM routine (at 
-approximately $A900), then starting HyForth at $0500 through WozMon.
+at $0600 by switching to the ROM, running the COPYTORAM routine (at 
+approximately $A900), then starting HyForth at $0600 through WozMon.  The input 
+buffer stack (TIB) is the entire page at $0400, with the DS and RT stacks
+splitting $0500.  Currently the end of the hardcoded word dictionary comes out
+at about $1100, with user-compiled words extending above that.
 
 The Hydra-16 maps ROM chips into one of 256 16K banks, any one of which
 will show up at $A000 depending on the selected bank.  These are selected
