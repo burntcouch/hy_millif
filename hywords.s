@@ -43,10 +43,14 @@ def_word "rp", "rp", 0
     bra REGIN
 ;
 
-     
+
+.ifdef SINGLE
 ;----------------------NUMERALS----------------------------------------
 ; ( -- n ) numeral 1
+def_word "$1", "onehex", 0
+     jmp ONEHEX
 def_word "1", "one", 0
+ONEHEX:
      lda #1
 DOWITHONE:
      sta TEMP1
@@ -56,41 +60,65 @@ DOWITHONE:
      jmp next     
 
 ; ( -- n ) numeral 2
+def_word "$2", "twohex", 0
+     lda #2
+     jmp DOWITHONE
 def_word "2", "two", 0
      lda #2
      jmp DOWITHONE
 
 ; ( -- n ) numeral 3
+def_word "$3", "threehex", 0
+     lda #3
+     jmp DOWITHONE
 def_word "3", "three", 0
      lda #3
      jmp DOWITHONE
 
 ; ( -- n ) numeral 4
+def_word "$4", "fourhex", 0
+     lda #4
+     jmp DOWITHONE
 def_word "4", "four", 0
      lda #4
      jmp DOWITHONE
 
 ; ( -- n ) numeral 5
+def_word "$5", "fivehex", 0
+     lda #5
+     jmp DOWITHONE
 def_word "5", "five", 0
      lda #5
      jmp DOWITHONE
 
 ; ( -- n ) numeral 6
+def_word "$6", "sixhex", 0
+     lda #6
+     jmp DOWITHONE
 def_word "6", "six", 0
      lda #6
      jmp DOWITHONE
 
 ; ( -- n ) numeral 7
+def_word "$7", "sevenhex", 0
+     lda #7
+     jmp DOWITHONE
 def_word "7", "seven", 0
      lda #7
      jmp DOWITHONE
 
 ; ( -- n ) numeral 8
+def_word "$8", "eighthex", 0
+     lda #8
+     jmp DOWITHONE
 def_word "8", "eight", 0
      lda #8
      jmp DOWITHONE
 
 ; ( -- n ) numeral 9
+def_word "$9", "ninehex", 0
+     lda #9
+     jmp DOWITHONE  
 def_word "9", "nine", 0
      lda #9
      jmp DOWITHONE  
@@ -105,7 +133,10 @@ DOWITHNEG:
      jmp next 
 
 ; ( -- n ) numeral 0
+def_word "$0", "zerohex", 0
+     jmp DOITZERO
 def_word "0", "zero", 0
+DOITZERO:
      lda #0
      sta TEMP1
      sta TEMP1+1
@@ -199,6 +230,7 @@ def_word "%0", "binary0", 0
 def_word "%1", "binary1", 0
      lda #1
      jmp DOWITHONE  
+.endif   ; SINGLE
      
 ;----------------------LOGIC FUNCTIONS--------------------------
 ; ( w1 w2 -- w1 AND w2 )
