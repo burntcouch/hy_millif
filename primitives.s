@@ -396,7 +396,7 @@ def_word "emit", "emit", 0
 ;---------------------------------------------------------------------
 ; ( w1 w2 -- NOT(w1 AND w2) )
 def_word "nand", "nand", 0
-    jsr spull_1             ; load TEMP1 from stack
+    jsr spull_1             ; load TEMP2, TEMP1 from stack
     jsr spull_0
     lda TEMP2
     and TEMP1
@@ -408,7 +408,7 @@ def_word "nand", "nand", 0
                        ; sta TEMP1 + 1 at 'keeps', then jsr spush_0 and 'next'
     jmp keeps  ; uncomment if carry could be set
 
-;---------------------------------------------------------------------
+;---------------------PLUS and MINUS----------------------------------
 ; ( w1 w2 -- w1+w2 ) 
 def_word "+", "plus", 0
     jsr spull_1        ; load TEMP2 from stack
@@ -435,8 +435,6 @@ def_word "-", "minus", 0
                    ; sta TEMP1 + 1 at 'keeps', then jsr spush_0 and 'next'
     clc            ; not sure why, but just in case?
     jmp keeps    
-    
-
     
 ;---------------------------------------------------------------------
 ; ( 0 -- $0000) | ( n -- $FFFF)  normalize boolean - change TOS to $0000 if false, $FFFF if TRUE

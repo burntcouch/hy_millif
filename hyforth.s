@@ -767,9 +767,53 @@ keeps:                      ; saves bytes since have to get here anyway
     sta TEMP1 + 1
 this:                       ; same as above
     jsr spush_0             ; then pushes on stack?
-;jmpnext:                   ; is this label needed?
+;jmpnext:                   ; is this label needed?  apparently not...
     jmp next
 
+;-----------------------IMMEDIATE, '[', ']', ','-----------------------
+def_word "I", "Imm", 0   
+wimm:                        ; jmp here if proccessing a compiled
+    lda LASTHEAP+1                ;  ...word that needs to be 'immediate'.
+    sta TEMP4+1
+    lda LASTHEAP               ; get addr of 'last' compiled word
+    clc
+    adc #2                     ; calc where length byte is
+    sta TEMP4                  
+    bcc IMMSKIP
+    inc TEMP4+1
+IMMSKIP:
+    ldy #0
+    lda (TEMP4),y
+    ora #$80                 ; set bit 7 and store
+    sta (TEMP4),y
+    jmp next
+
+def_word "[", "leftbrack", FLAG_IMM       ; switch to 'interpretive mode?'
+    stz STATUS
+    jmp next
+
+def_word "]", "rtbrack", 0               ; and then back to compile?
+    lda #1
+    sta STATUS
+    jmp next
+    
+def_word ",", "xcomma", 0
+    jsr spull_0
+    ldy #0
+    lda TEMP1
+    sta (NEXTHEAP),y
+    iny
+    lda TEMP1+1
+    sta (NEXTHEAP),y
+    lda NEXTHEAP
+    clc
+    adc #2
+    sta NEXTHEAP
+    bcc COMMASKIP
+    inc NEXTHEAP+1
+COMMASKIP:
+    jmp next
+    
 ;--------------------------------------------SEMIS-----------------
 def_word ";", "semis",  FLAG_IMM
 ; update LASTHEAP, panic if colon not lead elsewhere 
