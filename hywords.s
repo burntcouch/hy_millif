@@ -18,7 +18,7 @@ def_word "cr", "crlf", 0
      jsr WRITE_CHAR
      jmp next
 ;    
-def_word ">in", "inptr", 0
+def_word ">in", "inptr", 0                  ; CURBUF - pointer into INBUF (TIB)
     lda #STATUS + 2
 REGIN:
     sta TEMP1
@@ -26,19 +26,19 @@ REGIN:
     sta TEMP1+1
     jmp this
 ;    
-def_word "last", "last", 0
+def_word "last", "last", 0                   ; LASTHEAP addr onto stack
     lda #STATUS + 4
     bra REGIN
 ;    
-def_word "here", "here", 0
+def_word "here", "here", 0                   ; NEXTHEAP addr onto stack
     lda #STATUS + 6
     bra REGIN
 ;
-def_word "sp", "sp", 0
+def_word "sp", "sp", 0                       ; DSPTR pointer addr onto stack
     lda #STATUS + 8
     bra REGIN
 ;
-def_word "rp", "rp", 0
+def_word "rp", "rp", 0                       ; RTPTR pointer addr onto stack
     lda #STATUS + 10
     bra REGIN
 ;
@@ -235,7 +235,8 @@ def_word "%1", "binary1", 0
 ;----------------------LOGIC FUNCTIONS--------------------------
 ; ( w1 w2 -- w1 AND w2 )
 def_word "and", "xand", 0   ; had to use 'xand' cuz 'and' used for something important...
-    jsr spull_1             ; load TEMP1 from stack
+    jsr spull_1             ; load TEMP2, TEMP1 from stack
+    jsr spull_0
     lda TEMP2
     and TEMP1
     sta TEMP1
@@ -245,7 +246,8 @@ def_word "and", "xand", 0   ; had to use 'xand' cuz 'and' used for something imp
 ;
 ; ( w1 w2 -- w1 OR w2 )
 def_word "or", "or", 0
-    jsr spull_1             ; load TEMP1 from stack
+    jsr spull_1             ; load TEMP2, TEMP1 from stack
+    jsr spull_0
     lda TEMP2
     ora TEMP1
     sta TEMP1
@@ -255,7 +257,8 @@ def_word "or", "or", 0
 ;
 ; ( w1 w2 -- w1 XOR w2 )
 def_word "xor", "xor", 0
-    jsr spull_1             ; load TEMP1 from stack
+    jsr spull_1             ;load TEMP2, TEMP1 from stack
+    jsr spull_0
     lda TEMP2
     eor TEMP1
     sta TEMP1
