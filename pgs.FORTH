@@ -1,13 +1,10 @@
 
- : 2dup over over ;
- : 2drop drop drop ;
-
- : alloc here @ + here ! ;
-
+ ;: alloc here @ + here ! ;
+ ;: >r rp @ @ swap rp @ ! rp @ 2 - rp ! rp @ ! ;
+ ;: r> rp @ @ rp @ 2 + rp ! rp @ @ swap rp @ ! ;
+  ;: allot here @ + here ! ;
+  
  : 2* dup + ;
- : >r rp @ @ swap rp @ ! rp @ 2 - rp ! rp @ ! ;
- : r> rp @ @ rp @ 2 + rp ! rp @ @ swap rp @ ! ;
- 
  : branch rp @ @ dup @ + rp @ ! ;
  : ?branch 0# not rp @ @ @ 2 - and rp @ @ + 2 + rp @ ! ;
  : lit rp @ @ dup 2 + rp @ ! @ ;
@@ -42,7 +39,7 @@
  
  : create here @ : ['] lit , here @ 4 + , ['] exit , 0 s@ ! last ! ; 
  : cells lit [ 2 , ] ;
- : allot here @ + here ! ;
+
  : variable create cells allot ;
  
   ." Hello world !" cr

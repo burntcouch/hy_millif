@@ -43,6 +43,54 @@ def_word "rp", "rp", 0                       ; RTPTR pointer addr onto stack
     bra REGIN
 ;
 
+def_word "allot", "allot", 0
+    jsr spull_0       ; get byte count from stack, put in TEMP1
+    ldy #1
+    lda (NEXTHEAP),y
+    sta TEMP2+1
+    dey
+    lda (NEXTHEAP),y
+    sta TEMP2
+    clc
+    adc TEMP1
+    sta (NEXTHEAP),y
+    lda TEMP2+1
+    adc TEMP1+1
+    iny
+    sta (NEXTHEAP),y
+    jmp next
+;                             ': >r rp @ @ swap rp @ ! rp @ 2 - rp ! rp @ ! ;'
+def_word ">r", "s_to_r", 0
+    jsr spull_0   ; put top of stack in TEMP1
+    ldy #TEMP1
+    jsr rpush
+    jmp next
+;                             ': r> rp @ @ rp @ 2 + rp ! rp @ @ swap rp @ ! ;'
+def_word "r>", "r_to_s", 0 
+    ldy #TEMP1
+    jsr rpull
+    jsr spush_0     ; and push on DS stack
+    jmp next
+;
+
+; (? -- ?)                - ': lit rp @ @ dup 2 + rp @ ! @ ;'
+;      DOESN'T QUITE WORK YET, BUT CLOSE
+;
+def_word "litx", "literal", 0       ; renaming for now, since don't work
+   ldy #TEMP3           
+   jsr rpull            ; 'rp @' more or less, w/o push to DS
+   ldx #TEMP3           
+   jsr FETCH_WX         ; copy from ((RTPTR)) to TEMP2 to TEMP1, push - '@'
+                       ; 'dup' - already in TEMP1, so don't need to push/pull again
+   lda TEMP1           ; '2 +'
+   clc
+   adc #2              
+   bcc LITSKIP
+   inc TEMP1+1
+LITSKIP:       
+   ldy #TEMP1
+   jsr rpush           ; 'rp @ !'  - alreay in TEMP1, don't need to use stack
+   jmp fetchw          ; '@'       - regular path.  addr already on stack
 
 .ifdef SINGLE
 ;----------------------NUMERALS----------------------------------------
@@ -303,7 +351,7 @@ CMPLINK:
    beq IEQFALSE
    jmp IEQTRUE
 ;
-; (n1 n2 -- n1=n2)  not equal   
+; (n1 n2 -- n1=n2)  equal   
 def_word "=", "eq", 0
    jsr spull_1
    jsr spull_0
@@ -315,6 +363,15 @@ def_word "=", "eq", 0
    bne IEQFALSE
    jmp IEQTRUE
 ;
+; (n1 -- n1=0)  equal to zero  
+def_word "0=", "eqz", 0
+   jsr spull_0
+   lda TEMP1
+   ora TEMP1+1       ; only zero if both zero
+   bne IEQFALSE
+   jmp IEQTRUE
+;
+
 ; (n1 n2 -- n1>n2)  more than
 def_word ">", "gt", 0
    jsr spull_1
@@ -351,7 +408,6 @@ def_word "<=", "lte", 0
    bcc IEQTRUE
    beq IEQTRUE
    jmp IEQFALSE
-   
    
 ;
 ; (n1 n2 == n1>=n2) greater than or equal
@@ -396,11 +452,11 @@ def_word "swap", "swap", 0
 ;
 ;  (a -- a a)
 def_word "dup", "dup", 0
-   jsr spull_0          ; pull top
-   lda TEMP1
-   lda TEMP1+1
+   jsr spull_0          ; pull top to TEMP1
+ ;  lda TEMP1
+ ;  lda TEMP1+1
    jsr spush_0          ; and then push back
-   jmp this            ; includes jsr spush_0
+   jmp this            ; includes jsr spush_0 for second time
 ;
 ; (a -- )
 def_word "drop", "drop", 0
@@ -416,6 +472,17 @@ def_word "xS", "xS", 0
    sta (DSPTR),y
    iny
    sta (DSPTR),y
+   jmp next
+;
+; (RT:a a a ... -- RT: )    clear RT
+def_word "xR", "xR", 0
+   lda #RTEND
+   sta RTPTR
+   lda #0
+   ldy #0
+   sta (RTPTR),y
+   iny
+   sta (RTPTR),y
    jmp next
 ;
 ; (a b c -- b c a)
@@ -437,7 +504,101 @@ def_word "over", "over", 0
    jsr spush_1
    jmp next
 ;
-
-
-;  end hywords.s
+; (a b -- b)
+def_word "nip", "nip", 0
+   jsr spull_0
+   jsr spull_1
+   jsr spush_0
+   jmp next
 ;
+; (a b -- b a b)
+def_word "tuck", "tuck", 0
+   jsr spull_0
+   jsr spull_1
+   jsr spush_0
+   jsr spush_1
+   jsr spush_0
+   jmp next
+;
+; (a b -- a b a b)
+def_word "2dup", "dup2", 0
+   jsr spull_1          ; pull top to TEMP2
+   jsr spull_0          ; then TEMP1
+   jsr spush_0          ; and then push back
+   jsr spush_1
+   jsr spush_0
+   jsr spush_1         
+   jmp next             ; includes jsr spush_0 for second time
+;
+; (a b -- )
+def_word "2drop", "drop2", 0
+   jsr spull_0
+   jsr spull_0
+   jmp next
+;
+; (a b c d -- a b c d a b)
+def_word "2over", "over2", 0
+   ldy #TEMP4
+   jsr spull     ; to TEMP4 'd'
+   jsr spull_2  ; TEMP3 'c'
+   jsr spull_1  ; TEMP2 'b'
+   jsr spull_0  ; TEMP1 'a'
+   jsr spush_0  ;  'a'
+   jsr spush_1  ;  'b'
+   jsr spush_2  ;  'c'
+   ldy #TEMP4
+   jsr spush    ; 'd'
+   jsr spush_0  ;  'a' again
+   jsr spush_1  ;  'b' again
+   jmp next
+;
+; (a -- )       load a compile-able script from memory, zero term'd
+def_word "cload", "cload", 0
+    lda #$0D
+    jsr WRITE_CHAR
+    lda #$0A
+    jsr WRITE_CHAR
+    lda #'-'
+    jsr WRITE_CHAR
+    jsr spull_0  ; address from stack to TEMP1
+    ldy #0
+    lda #$20
+    sta INBUF, y   ; put space at start
+CLOAD_LP:   
+    lda (TEMP1), y
+    beq CLOAD_CONT     ; stops at first 0
+    jsr WRITE_CHAR     ; echo char out so can see what's being pulled in
+    iny           ; yep, skip
+    sta INBUF, y
+    bra CLOAD_LP
+CLOAD_CONT:
+    iny
+    lda #$20
+    sta INBUF,y     ; not sure but won't hurt to add a space
+    lda #$0D
+    jsr WRITE_CHAR
+    lda #$0A
+    jsr WRITE_CHAR
+    lda #$20
+    sta INBUF       ; start with space
+    sta INBUF, y        ; ends with space
+    lda #0            ; mark eol with 0
+    sta INBUF + 1, y
+; start it
+    sta CURBUF
+    tya                ; calc next address if want to load more
+    clc
+    adc TEMP1
+    sta TEMP1
+    bcc UPDTEMPSKIP
+    inc TEMP1+1
+UPDTEMPSKIP:
+    jsr spush_0        ; push next addr on stack if wanted
+    jsr token            ; massage the buffer, oh yeah
+    jmp RESFIND           ; works perfectly!
+;
+;
+;----------------------------------------------------------------------------
+HYWORDS_END:
+;  end hywords.s
+;----------------------------------------------------------------------------

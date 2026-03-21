@@ -78,6 +78,20 @@ makelabel "", label
      ply
 .endmacro
 
+
+.macro  WSEQ_raw  strlbl
+     phy
+     ldy #0
+@wsqloop:
+     lda strlbl, y
+     beq @wsqend
+     iny
+     jsr WRITE_CHAR
+     bra @wsqloop
+@wsqend:
+     ply
+.endmacro
+
 .macro WSEQ  strlbl
       pha
       WSEQ_np  strlbl
@@ -128,15 +142,15 @@ H0000 = 0
 
 ; number conversion
 numbers := 1      ; include DEC/BIN/HEX conversion
-NEWNUMS := 1
+
 SINGLE := 1     ; single digits hard coded?
 
 DEBUG := 1        ; enable inclusion of debug code
 
-HYWORDS := 1      ; add in some hardcoded numbers / logic
+HYWORDS := 1      ; add in additional hardcoded words / logic
 
 ;---------------------------------------------------------------------
-;                     for PGS hyforth stuff
+;              for PGS hyforth stuff
 ;
 ; error codes
 ;
@@ -151,11 +165,9 @@ BACKSPC := $08
 CR := $0D
 LF := $0A
 
-;
+;---------------------------------------------------------------------
 ;                 CORE ENGINE CONSTANTS
 ;
-CODESTART = $0600
-
 ; cell size, two bytes, 16-bit
 CELL = 2    
 ; highlander, immediate flag.
@@ -183,13 +195,30 @@ READ_CHAR = $F800
 WRITE_BYTE = $F8A3
 WOZMON = $FE00
 INROM = $A000
-
+;----------------------------------------------------------------------
+;       Look closely at hyforth.cfg and the output of ca65/ld65 after
+;  a build; the RAM and ROM code is carefully arranged when the binary
+;  is created, to make initialization easier and optimize RAM use.
+;  The main program engine starts at $A000 and is only about 500 bytes
+;  long.  Additional functions, then initialization and debug code, 
+;  then the dictionary follow in the binary, and these stay in ROM.
+;
+;       The dictionary has a particular structure, with 'bye' and 'abort'
+;  at the beginning; there are some core words such as 'words', 'dump'
+;  and etc, then contents of 'primitives.s', then 'hywords.s', followed by
+;  the end of the dictionary with critical items such as 'fetch', 'store', 
+;  'immediate', 'compile, 'semis', 'exit, and ancillary stuff.
+;
+;       When $A003 is run from WozMon, a jump instruction to 'main' is
+;  copied to $0600, followed by the dictionary, with 'exit' at then end.
+;  HyForth is start by running '600R' or 'A000R'.
+;
 ;----------------------------------------------------------------------
 ;                   ZERO PAGE USAGE
 ;----------------------------------------------------------------------
 .segment "ZP"
 .org $D8
-
+ZPSTART:
 ;
 ;                   HyForth setup stuff
 ;
@@ -220,7 +249,7 @@ NEXTHEAP:   .word $0 ; next free cell in heap dictionary
 DSPTR:    .word $0 ; data stack base,
 RTPTR:    .word $0 ; return stack base
 INSTPTR:    .word $0 ; instruction pointer
-WORDPTR:    .word $0 ; word pointer          rename WORDPTR
+WORKREG:    .word $0 ; word pointer          rename WORKREG
 
 ; free for use
 
@@ -268,6 +297,11 @@ main:
     jmp cold
     jmp COPYTORAM
 
+HYPROMPT:
+    .byte $0D, $0A
+    .byte "HF>"
+    .byte 0
+ 
 cold:
     cld
     jsr CLEAR          ; zero out zero page, INBUF, DS, and RT
@@ -325,7 +359,7 @@ resolvept:
 
 ;---------------------------------------------------------------------
 okey:
-   ; WSEQ_np RSV_OKAY   ;-- more trouble than worth right now
+   ;  ;-- more trouble than worth right now?
     
 resolve:           ; get a token
     jsr token
@@ -338,7 +372,7 @@ resolve:           ; get a token
     
 RVPSKIP:
 
-find:                ; load last word on heap
+RESFIND:                ; load last word on heap
     lda LASTHEAP + 1
     sta TEMP2 + 1
     lda LASTHEAP
@@ -346,7 +380,7 @@ find:                ; load last word on heap
     
 RESLOOP:              ; lsb linked list
     lda TEMP2
-    sta WORDPTR
+    sta WORKREG
     ora TEMP2+1             ; only zero if both are zero
     bne RESEACH              ; PGS - did he forget this?                       
                            
@@ -358,47 +392,42 @@ WORDNOTFOUND:
 
 RESEACH:                        ; msb linked list 
     lda TEMP2 + 1
-    sta WORDPTR + 1           ; update next link 
+    sta WORKREG + 1           ; update next link 
     
-    ldx #WORDPTR       
+    ldx #WORKREG       
     ldy #TEMP2      
     jsr copyfrom
     ldy #0              ; compare words
-    lda (WORDPTR), y    ; save the flag, first byte is (size and flag) 
+    lda (WORKREG), y    ; save the flag, first byte is (size and flag) 
     sta STATUS + 1
 
 ; compare chars
-@equal:
+RESEQUAL:
     lda (NXTTOK), y
     cmp #$20            ; space ends
-    beq @done
+    beq RESDONE
     sec                 ; verify 
-    sbc (WORDPTR), y     
+    sbc (WORKREG), y     
     asl                 ; clean 7-bit ascii
     bne RESLOOP
+    iny                 ; get next char
+    bne RESEQUAL
 
-; next char
-    iny
-    bne @equal
-
-@done:
-; update WORDPTR
-    tya
-    ;; ldx #(WORDPTR) ; set already
-    ;; addwx also clear carry
+RESDONE:
+    tya                ; update WORKREG
     jsr addwx
     
 eval:
-; executing ? if == \0
+; executing ? if status = 0
     lda STATUS   
     beq execute
 ;
-; immediate ? if < \0
+; immediate ? if status+1 < 0
     lda STATUS + 1   
     bmi immediate      
-;
-compile:
-    lda DFLAG
+
+compile:          ; otherwise compile
+    lda DFLAG          ; DEBUG, print C if here
     bne CMPSKIP    
     WCRLF_np
     lda #'C'
@@ -410,19 +439,19 @@ CMPSKIP:
 ;    
 immediate:
 execute:
-    lda DFLAG
+    lda DFLAG         ; DEBUG, print E if here
     bne EXESKIP    
     WCRLF_np
     lda #'E'
     jsr WRITE_CHAR 
 EXESKIP:
-    lda #>resolvept
-    sta INSTPTR + 1
+    lda #>resolvept     ; set up INSTPTR to run, 
+    sta INSTPTR + 1     ; or return to interpreter.
     lda #<resolvept
     sta INSTPTR
-    jmp pick
+    jmp pick             ; let's doc this....
 
-;---------------------------------------------------------------------
+;-----------------------START PROCESSING INPUT-----------------------
 try:
     lda INBUF, y                   ; index is in y
     beq getline    ; if \0  - get a line if pointing at 0
@@ -430,29 +459,30 @@ try:
     eor #$20       ; return 0 in  A if a space 
     rts
 
-;---------------------------------------------------------------------
-getline:
-; drop rts of try, fall through to 'token'
+;--------------------GET AN INPUT LINE ENDING WITH CR/LF ------------
+getline:   ; drop rts of try, fall through to 'token'
+    WSEQ_raw HYPROMPT    ; print prompt
+;
     pla
     pla
     ldy #0   ; leave the first
-@loop:
+GETLOOP:
     sta INBUF, y  ; dummy store on first pass, overwritten
     iny
     cpy #INBUF_end
-    beq @ends
-@readlp:
+    beq GETLNEND
+GETREADLOOP:
     jsr READ_CHAR
-    bcc @readlp
+    bcc GETREADLOOP
     cmp #CR      
-    beq @ends
+    beq GETLNEND
     cmp #BACKSPC         ; handle backspace
-    bne @loop
+    bne GETLOOP
     dey
     dey
     lda INBUF, y      ; make sure prev char not overwritten
-    bra @loop
-@ends:                ; clear all if y eq \0
+    bra GETLOOP
+GETLNEND:                ; clear all if y eq \0
     lda #$0D
     jsr WRITE_CHAR
     lda #$0A
@@ -460,11 +490,10 @@ getline:
     lda #$20
     sta INBUF       ; start with space
     sta INBUF, y        ; ends with space
-    lda #0            ; mark eol with \0
+    lda #0            ; mark eol with 0
     sta INBUF + 1, y
 ; start it
     sta CURBUF
-
 
 ;---------------------------------------------------------------------
 ; in place every token,
@@ -473,19 +502,19 @@ getline:
 token:
     ldy CURBUF   ; last position on INBUF
 
-@skip:   ; skip spaces
+TOKENSKIP:   ; skip spaces
     jsr try
-    beq @skip
+    beq TOKENSKIP
     dey   ; keep y == <start of input word> + 1
     sty NXTTOK
 
-@scan:  ; scan spaces
+TOKENSCAN:  ; scan spaces
     jsr try
-    bne @scan
+    bne TOKENSCAN
     dey   ; keep y == <end of input word> + 1  
     sty CURBUF 
 
-@done:  ; find size and store it
+TOKENDONE:  ; find size and store it
     jsr DUMPREG                        ; DEBUG
     
     tya
@@ -497,36 +526,33 @@ token:
     sty NXTTOK
     ;
     ;  During interpretive mode at least...do number conversions here, before 
-    ;  looking at word list; will be pushed on stack.
-    ;
+    ;     looking at word list; will be pushed on stack.
     ;  This SHOULD have a general digit converter (any base up to 16); return C = 1 if no conversion
     ;   if SINGLE is defined, this will skip single digit numbers and use hardcoded ones.
     ;
-.ifdef NEWNUMS
+.ifdef numbers
       ldy #0
       lda (NXTTOK),y
       tax                ; store size in X, pass to conversion 
       jsr DIGCONVT
-      bcs TOKENEND       ; if some error in conversion, skip
-      ; falls through to TOKCLR0
-.endif  ; 'new nums' switching
-
+      bcs TOKENEND       ; if some error in conversion, skip and process regular way
 TOKCLR0:
       ldy #0
-      lda (NXTTOK),y
+      lda (NXTTOK),y     ; load length again
       tax
       inx      
-      lda #$20
+      lda #$20           ; copy spaces over entire converted string
 TOKCLR:
       sta (NXTTOK),y
       iny
       dex
       bne TOKCLR
+  
+      jsr DUMPREG               ; DEBUG
       
-      jsr DUMPREG
-      
-      jmp token               ; and get next token
-                              ; maybe works?
+      jmp token               ; and use 'token' to rebuild input buffer w/o converted #
+.endif  ; 'new nums' switching 
+
 TOKENEND:
     jsr DUMPREG
     
@@ -546,10 +572,14 @@ decwx_end:
     rts
 
 ;---------------------------------------------------------------------
+;
+;   COMMA allocates memory at top of heap for 'other stuff'
+;   and makes sure heap and working reg pointers are updated.
+;
 ; heap linked list (moves forward)
 ;
 wcomma:
-    ldy #WORDPTR                  ; copy addr at WORDPTR, change addr fld NEXTHEAP points to
+    ldy #WORKREG                  ; copy addr at WORKREG, change addr fld NEXTHEAP points to
 comma: 
     ldx #NEXTHEAP                 ; Y has source of address, change addr fld NEXTHEAP points to
     ; fall through - to?  copyinto, then rts
@@ -612,17 +642,16 @@ ptrerr:                      ; pop jsr off stack, throw error
     pla
     jmp errrtn
 ;
-;---------------------------PULL a cell------------------------------------
+;---------------- PULL a cell, with convenience for TEMP 1/2/3 -----
 ;
 spull_2:
     ldy #TEMP3              ; pull TEMP3 from top
     jmp spull
-;
+    
 spull_1:                    ; pull TEMP2 from top
     ldy #TEMP2
-    jmp spull                 ; why was it jsr?
-;
-;---------------------------------------------------------------------
+    jmp spull    
+
 spull_0:
     ldy #TEMP1             ; pull TEMP1 from top of DS
 ;
@@ -636,7 +665,7 @@ spull:
     cmp #DSEND        ; ditto
     beq ptrerr        ; ditto
     jmp pull
-rpull:
+rpull:                ; !!! RPULL requires explicit loading of dest to Y !!!
     ldx #RTPTR
     lda RTPTR        ; pointer bounds checking
     cmp #RTEND        ; ditto
@@ -674,9 +703,9 @@ ENGINEEND:
 ;                           END OF CORE ENGINE
 ;----------------------------------------------------------------------
 ;
+;                        DICTIONARY and ADDITIONS
 ;
-;------------------------------------------------------------------------
-;    UPPER RAM stuff.  error messaging, CLEAR on start, debug, utilities
+;    upper.s -- error messaging, CLEAR on start, debug, utilities
 ;------------------------------------------------------------------------
 ;
 upper_ram:
@@ -684,7 +713,8 @@ upper_ram:
 UPPER_END:
 ;
 ;------------------------------------------------------------------------
-;                            ROM ONLY stuff
+;                          
+;    hyf_rom.s -- debugging, initialization, and COPYTORAM
 ;
 .include "hyf_rom.s"
 ;
@@ -698,15 +728,22 @@ ROMCODEEND:                         ; end of all code
 ;
 ;  end of hyforth.s
 ;
-
-    .res 16
-
-COPYSTART:
-.segment "CODE"
+;-----------------------------------------------------------------------
+    .res 16                    ; just a visible buffer in binary
+                               ; to make easier to identify different
+                               ; code segments.
+;-----------------------------------------------------------------------
+;                            BELOW ENDS UP IN RAM
+;-----------------------------------------------------------------------
+COPYSTART:                    ; marks beginning of copy in ROM space
+.segment "CODE"                
 .org $0600
 RAMSTART:
-     jmp main                   ; should be at $A000 now
-     
+     jmp main                   ; MAIN program start
+                                ; should be at $A000 now
+;---------------------------------------------------------------------
+;        primitives.s -- original AGSB hardcoded dictionary
+;
 primitives:
 .include "primitives.s"
 ;
@@ -715,12 +752,13 @@ primitives:
    .include "hywords.s"
 .endif
 ;---------------------------------------------------------------------
-;   real core functions
 ;
-;---------------------------------------------------------------------
+;------------ CRITICAL CORE PRIMITIVES (AGSB and PGS) ----------------
+;
 ;   COMPILE (:), FINISH (;), FETCH (@), STORE (!)
 ;      including:  keeps, this, next, finish
 ;       ...and other stuff.
+;
 ;---------------------------------------------------------------------
 ; ( a -- ) execute a jump to a reference at top of data stack
 def_word "exec", "exec", 0 
@@ -753,11 +791,11 @@ storew:
 def_word "@", "fetch", 0      ; replace addr of data on top of DS, with data pointed to
 fetchw:
     jsr spull_0             ; get addr from DS
-    ldx #TEMP1
+    ldx #TEMP1              
     ldy #TEMP2
     jsr copyfrom            ; copies data from [TEMP1] => TEMP2
 ;---------------------------------------------------------------------
-;            NEXT entry point for most primitives
+;            NEXT entry point for many AGSB primitives
 ;---------------------------------------------------------------------
 copys:                      ; copy from cell at y (zp) to TEMP1
     lda 0, y               
@@ -766,18 +804,30 @@ copys:                      ; copy from cell at y (zp) to TEMP1
 keeps:                      ; saves bytes since have to get here anyway
     sta TEMP1 + 1
 this:                       ; same as above
-    jsr spush_0             ; then pushes on stack?
-;jmpnext:                   ; is this label needed?  apparently not...
+    jsr spush_0             ; then push back on stack
     jmp next
-
+; ;
+FETCH:
+    jsr spull_0             ; get addr from DS
+    ldx #TEMP1
+FETCH_WX:                    ; set X from somewhere else
+    ldy #TEMP2
+    jsr copyfrom            ; copies data from [TEMP1] => TEMP2                
+    lda 0, y                ; copy from cell at y (zp) to TEMP1
+    sta TEMP1
+    lda 1, y
+    sta TEMP1 + 1
+    jsr spush_0             ; then push on stack
+    rts
+    
 ;-----------------------IMMEDIATE, '[', ']', ','-----------------------
 def_word "I", "Imm", 0   
 wimm:                        ; jmp here if proccessing a compiled
-    lda LASTHEAP+1                ;  ...word that needs to be 'immediate'.
+    lda LASTHEAP+1           ;  ...word that needs to be 'immediate'.
     sta TEMP4+1
-    lda LASTHEAP               ; get addr of 'last' compiled word
+    lda LASTHEAP             ; get addr of 'last' compiled word
     clc
-    adc #2                     ; calc where length byte is
+    adc #2                   ; calc where length byte is
     sta TEMP4                  
     bcc IMMSKIP
     inc TEMP4+1
@@ -797,9 +847,9 @@ def_word "]", "rtbrack", 0               ; and then back to compile?
     sta STATUS
     jmp next
     
-def_word ",", "xcomma", 0
-    jsr spull_0
-    ldy #0
+def_word ",", "xcomma", 0                ; store data and adjust 
+    jsr spull_0                          ; heap pointers to hop
+    ldy #0                               ; over allocated cell
     lda TEMP1
     sta (NEXTHEAP),y
     iny
@@ -816,7 +866,7 @@ COMMASKIP:
     
 ;--------------------------------------------SEMIS-----------------
 def_word ";", "semis",  FLAG_IMM
-; update LASTHEAP, panic if colon not lead elsewhere 
+; update LASTHEAP, copy pointer to BACKHEAP if something goes wrong in ':'
     lda BACKHEAP 
     sta LASTHEAP
     lda BACKHEAP + 1 
@@ -828,11 +878,12 @@ def_word ";", "semis",  FLAG_IMM
 ; compound words must ends with exit
 finish:
     lda #<exit
-    sta WORDPTR
+    sta WORKREG
     lda #>exit
-    sta WORDPTR + 1
-    jsr wcomma                  ; change NEXTHEAP to point to addr of 'exit'
-
+    sta WORKREG + 1
+    jsr wcomma                  ; change NEXTHEAP to point to addr of 'exit',
+                                ; and make sure is last entry in code table for word...
+                                ; as all good Forth compiled words should do.
     jmp next
 ;
 ;
@@ -860,15 +911,14 @@ COMPHEADER:
     ldy #0
 COMPLOOP:    
     lda (NXTTOK), y
-    cmp #$20            ; stops at space
+    cmp #$20                ; stops at space
     beq COMPEND
     sta (NEXTHEAP), y
     iny
     bne COMPLOOP
 
 COMPEND:
-; update here - only copies...one byte?
-    tya
+    tya                    ; and update NEXTHEAP
     ldx #(NEXTHEAP)
     jsr addwx
 
@@ -877,7 +927,7 @@ COMPEND:
 ;---------------------------------------------------------------------
 ; Thread Code Engine
 ;
-;   INSTPTR is IP, WORDPTR is W
+;   INSTPTR is IP, WORKREG is W
 ;
 ;     unnest, next, pick, nest, and jump
 ;
@@ -888,36 +938,38 @@ COMPEND:
 ; ( -- ) 
 def_word "exit", "exit", 0
 unnest:                      ;    this is EXIT but not all of it...
-; get IP from RT, incr RTPTR: INSTPTR = [RTPTR], RTPTR += 2 
+                             ; get IP from RT, incr RTPTR: INSTPTR = [RTPTR], RTPTR += 2 
     ldy #INSTPTR
     jsr rpull
 
 next:                        ;    go on to next word, update W, incr IP
-; WORDPTR = (INSTPTR) ; INSTPTR += 2
+; WORKREG = (INSTPTR) ; INSTPTR += 2
     ldx #INSTPTR
-    ldy #WORDPTR
+    ldy #WORKREG
     jsr copyfrom
 
-pick:                      ; FIX, this sucks - NEED TO SWITCH a DIFFERENT WAY here
-; compare pages (MSBs)
-    lda WORDPTR + 1
-    cmp #>ends + 1
+                           ;   is the next word compiled or hardcoded?
+                           ;
+                           ; FIX, this sucks - NEED TO SWITCH a DIFFERENT WAY here.
+                           ;
+pick:
+    lda WORKREG + 1       ; compare pages (MSBs)
+    cmp #>ends + 1        ;  !! Compiled must be higher in memory than hardcoded !! (see below)
     bmi jump              ; jump over nest if not a compiled word
 
-nest:   ; enter
-; push, *rp = INSTPTR, rp -=2   ; push [IP] on RT, decrement RTPTR
+nest:                     ; ENTER in classic Forth lingo
+                          ; push, *rp = INSTPTR, rp -=2   ; push [IP] on RT, decrement RTPTR
     ldy #INSTPTR
     jsr rpush
-    lda WORDPTR                 ; update IP to W
+    lda WORKREG                 ; update IP to W
     sta INSTPTR
-    lda WORDPTR + 1
+    lda WORKREG + 1
     sta INSTPTR + 1
     jmp next
 
 jump: 
-    jmp (WORDPTR)
-
-;~~~~~~~~
+    jmp (WORKREG)          ; start running code at next word, if hardcoded.
+                           ;  'next' will bring us back...
            
 ;-----------------------------------------------------------------------
 ; BEWARE, MUST BE AT END! MINIMAL THREAD CODE DEPENDS ON IT!
