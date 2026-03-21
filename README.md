@@ -34,7 +34,7 @@ LATEST CHANGES (3/21/26):
   one in the list you just type 'cload' until you've got them all loaded.
     AGAIN, this is now a stable, full featured forth, after the test words are loaded;
 a lot still needs to be done with machine-coded words but we're getting there...
-  
+------------------------------------------------------------------------------------
 LATEST CHANGES (3/14/26):
     A lot of the 'training' words in the my_bf.FORTH file have now been hardcoded, 
   include digits 0-9, -1 to -9, $A-F, %0 and %1 (binary digits); drop, dup, rot, over, 
