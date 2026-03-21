@@ -54,8 +54,6 @@ UKW_ERR:
 .ifdef numbers
 ;------------------------
 ;      CONVERT DIGITS, PUSH on DS
-;
-.ifdef NEWNUMS         ; use below if NEWNUMS enabled
 
 DIGCONVT:    ;  Y is index into NXTPTR, X is length
 		stz TEMP1
@@ -204,181 +202,6 @@ GETDIG_ERR:          ; pass carry set for no digit
     rts
 ;  end of new number conv
 ;
-.else               ; NOT NEWNUMS
-;
-;------binary 2 binary, format %xxxxxx... up to sixteen digits-----------
-;
-BIN2BIN:           ;  Y is index to TXTPTR, X is length
-    lda #'B'
-    jsr WRITE_CHAR
-    lda #0          ; zero everthing out
-    sta TEMP1
-    sta TEMP1 + 1
-    lda #2
-    sta DIGBASE        ; digit base - hex will be trickier but
-BBLOOP:               
-    jsr GETDIGS        ; get next digit, if there is one.  should return 0-9    
-    bcc BB_CONT         ; if carry set, not a digit, bail out   
-    jmp D_ERR
-BB_CONT:
-    asl TEMP1
-    rol TEMP1+1        ; shift left
-    clc
-    adc TEMP1
-    sta TEMP1
-    bcc BB_SKIP1
-    inc TEMP1+1
-BB_SKIP1:
-    iny 
-    dex
-    beq BB_END
-    cmp #$80              ; check to see if too large
-    bcc BBLOOP           ; less than, so far good, do more math
-    sec
-    jmp D_ERR            ; otherwise error, again
-BB_END:
-    jmp D2EXIT
-;
-;--------------------------HEX 2 binary, format $XXXX -------------------------
-;
-HEX2BIN:      ; Y is index to TXTPTR, X is length
-    lda #'H'
-    jsr WRITE_CHAR
-    txa
-    cmp #5
-    bcc HEX_SKIP0       ; process up to four hex digits, ignore rest
-    ldx #4
-HEX_SKIP0:
-    lda #0          ; zero everthing out
-    sta TEMP1
-    sta TEMP1 + 1
-HEXLOOP:
-    jsr HEXDIG
-    bcs HEXERR
-    asl TEMP1
-    rol TEMP1+1
-    asl TEMP1
-    rol TEMP1+1
-    asl TEMP1
-    rol TEMP1+1
-    asl TEMP1
-    rol TEMP1+1    ; shift four times
-    clc
-    adc TEMP1
-    sta TEMP1
-    bcc HEX_SKIP1
-    inc TEMP1+1
-HEX_SKIP1:
-    iny
-    dex
-    bne HEXLOOP
-    jmp D2EXIT
-HEXERR:
-    sec
-    jmp D_ERR
-    
-HEXDIG:
-    lda (NXTTOK), y
-    sec
-    sbc #$30
-    bcc HXDERR           
-    cmp #10
-    bcc HXDEND
-    sbc #$07
-    cmp #16
-    bcs HXDERR    
-HXDEND:
-    rts    
-HXDERR:
-    sec
-    rts
-;
-;-------- decimal
-;  
-    
-DEC2BIN2:   ; Y is index to TXTPTR, X is length
-    lda #0          ; zero everthing out
-    ; TEMP4 already set with minus flag
-    sta TEMP1
-    sta TEMP2
-    sta TEMP1 + 1
-    sta TEMP2 + 1
-    lda #10
-    sta DIGBASE        ; digit base - hex will be trickier but
-D2LOOP:               
-    jsr GETDIGS        ; get next digit, if there is one.  should return 0-9
-    
-    jsr DUMPREG
-    
-    bcs D_ERR         ; if carry set, not a digit, bail out
-    pha                ; push digit for later
-              ;---do the math----
-    asl TEMP1           ; multx10: shift left twice,
-    rol TEMP1 + 1
-    asl TEMP1
-    rol TEMP1 + 1
-    lda TEMP2            ; TEMP1 before shift
-    clc                 
-    adc TEMP1            ; ...add again,
-    sta TEMP1
-    lda TEMP2 + 1
-    adc TEMP1 + 1
-    sta TEMP1 + 1
-DSKIP2:
-    asl TEMP1           ; ...shift left once more
-    rol TEMP1 + 1
-D2SKIP3:
-    pla                ; get next digit back              
-    clc                ; ...and add.
-    adc TEMP1
-    sta TEMP1
-    sta TEMP2           ; save to TEMP2
-    bcc D2SKIP4
-    inc TEMP1 + 1
-D2SKIP4:
-    iny 
-    lda TEMP1 + 1
-    sta TEMP2 + 1       ; save to TEMP2
-    dex
-    beq D2CONT
-    cmp #$80              ; check to see if too large
-    bcc D2LOOP           ; less than, so far good, do more math
-    sec
-    
-    jsr DUMPREG
-
-    jmp D_ERR            ; otherwise error, again
-D2CONT:    
-    ldy TEMP4          ; now do the '-'
-    beq D2EXIT       ; well, then don't
-    lda TEMP1
-    eor #$FF          ; 1's complement
-    sta TEMP1
-    lda TEMP1+1
-    eor #$FF         ; invert second digit
-    sta TEMP1+1
-    inc TEMP1        ; and add one
-    bne D2EXIT      ; did that overflow to 0?
-    inc TEMP1 + 1    ; inc if so
-D2EXIT:
-    jsr spush_0          ; push TEMP1 on stack
-    clc            ; maybe spush messes with carry?
-D_ERR:
-    rts
-
-GETDIGS:
-    clc
-    lda (NXTTOK), y   
-    sec
-    sbc #$30               ; subtract to zero
-    cmp #DIGBASE               ; digit?    can substitute variable for BASE here.
-    bcc GTEND          ; yep, carry is clear
-GT_ERR:
-    sec                   ; nope, set carry for error
-GTEND:
-    rts
-
-.endif    ; NEWNUMS
 .endif    ; numbers
 ;--------------------------------- CLEAR ------------------------------
 ;
@@ -387,13 +210,13 @@ GTEND:
 ;
 HYWELCOME:
     .byte CR, LF
-    .byte "HyForth 0.1 03-2026"
+    .byte "HyForth 0.61 03-20-2026"
     .byte CR, LF, $00
 CLEAR:
     lda #1
     sta DFLAG                 ; debug OFF by default
 zpclear:
-    ldx #$E0                  ; whoops, this is all the ZP that is used
+    ldx #ZPSTART                  ; whoops, this is all the ZP that is used
     lda #0
 zerolp:
     sta  $00,x
