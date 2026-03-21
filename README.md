@@ -22,7 +22,7 @@ LATEST CHANGES (3/21/26):
   The 'COPYTOROM' routine at $A003 will load the dictionary into RAM at $0600, and 
   running from there will bring up HyForth with all the primitives and added words
   from 'hywords.s' into RAM.  Current RAM footprint is less than 2K, and ROM usage is
-  around 3K with test scripts.
+  around 3K with test scripts.  Zeropage usage is 38 bytes total, from $D8-$FB.
      And a lot MORE stuff.  All of the numerical conversions now work; a lot more hard-
    coded words, including:  2drop, 2dup, 2over, r>, >r, nip, tuck, xR (clear return
    stack), allot, sp, rp, >in, last, here, cr.
