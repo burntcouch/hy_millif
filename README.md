@@ -42,9 +42,7 @@ LATEST CHANGES (3/14/26):
    two characters packed in word).  I renamed the following:  .S / .R for %S / %R; << 
    and >> for asl / lsr - these latter now do multiple bit shifts, a la:
           ( w n -- w&lt;&lt;n )  and similar for &gt;&gt;
--------------------------------------------------------------
-</pre>
-<pre>
+------------------------------------------------------------------------------------
     Decimal to 'word' conversions now working fine, and binary/hex are just around the 
   corner.  Per design, none of these will work as bare words inside a compiled word,
   but we are working on hardcoding literals (both numbers and strings).
