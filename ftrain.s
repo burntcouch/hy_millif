@@ -50,13 +50,13 @@ ftrain_0:
 .byte 0
 .byte ": word in> drop begin dup in> <> until >in @ 2 - >in ! parse ;"
 .byte 0
-.byte ": [char] ['] lit , bl word drop c@ , ; I:"
+.byte ": [char] ['] lit , bl word drop c@ , ; I"
 .byte 0
 .byte ": ."
-.byte $34
+.byte $22
 .byte " [char] "
-.byte $34
-.byte " parse type ; I:"
+.byte $22
+.byte " parse type ; I"
 .byte 0
 .byte ": ( [char] ) parse drop drop ; I"
 .byte 0
