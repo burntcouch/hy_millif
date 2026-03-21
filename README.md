@@ -17,7 +17,25 @@
   shrink in RAM footprint according to context.<p>
 <p>
 <pre>
-LATEST CHANGES:
+LATEST CHANGES (3/21/26):
+     ROM conversion is now done; this version resides almost entirely at $A000 and on;
+  The 'COPYTOROM' routine at $A003 will load the dictionary into RAM at $0600, and 
+  running from there will bring up HyForth with all the primitives and added words
+  from 'hywords.s' into RAM.  Current RAM footprint is less than 2K, and ROM usage is
+  around 3K with test scripts.
+     And a lot MORE stuff.  All of the numerical conversions now work; a lot more hard-
+   coded words, including:  2drop, 2dup, 2over, r>, >r, nip, tuck, xR (clear return
+   stack), allot, sp, rp, >in, last, here, cr.
+     More importantly, 'cload' will now load all of the scripts for compiled test words
+  sequentially; usage is '$xxxx cload', where xxxx is the address of a zero terminated
+  string of Forth words.  The 'ftrain.s' file is assembled into ROM as part of the 
+  overall build, and the first word, '2*', ends up at $A5B9.  cload will automatically
+  push the address of the next string onto the stack, so after you load the first
+  one in the list you just type 'cload' until you've got them all loaded.
+    AGAIN, this is now a stable, full featured forth, after the test words are loaded;
+a lot still needs to be done with machine-coded words but we're getting there...
+  
+LATEST CHANGES (3/14/26):
     A lot of the 'training' words in the my_bf.FORTH file have now been hardcoded, 
   include digits 0-9, -1 to -9, $A-F, %0 and %1 (binary digits); drop, dup, rot, over, 
   swap; xS (clear data stack); <, >, >=, <=, =, <>; not, and, or, xor, neg; .C (prints
