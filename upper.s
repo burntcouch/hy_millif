@@ -50,6 +50,22 @@ UKW_ERR:
 ;
 ;-----------------------   NUMBER CONVERSIONS
 ;
+DEC2ASCII:       ;  X is # - return as two digits in TEMP3, TEMP3+1
+    lda #$30
+    sta TEMP3+1
+    txa
+    sta TEMP3
+D2ASCLOOP:
+    sec
+    sbc #$0A
+    bcc D2ASCNEXT
+    inc TEMP3+1
+    bra D2ASCLOOP
+D2ASCNEXT:
+    clc
+    adc #$3A
+    sta TEMP3
+    rts
 
 .ifdef numbers
 ;------------------------

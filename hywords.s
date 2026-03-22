@@ -72,25 +72,59 @@ def_word "r>", "r_to_s", 0
     jsr spush_0     ; and push on DS stack
     jmp next
 ;
+;   next up:  
+;
+;
+; : branch rp @ @ dup @ + rp @ ! ;
+; : ?branch nb not rp @ @ @ 2 - and rp @ @ + 2 + rp @ ! ;
+;
+;         Get next byte off INBUF, advance CURBUF
+def_word "in>", "intib", 0
+   stz TEMP1+1
+   ldy #0
+   lda (CURBUF),y
+   sta TEMP1
+   jsr spush_0
+   inc CURBUF
+   jmp next
+;  
+
+; ( a -- >[a])   -  : c@ @ ffh and ;  - load a byte
+def_word "c@", "c_from", 0    
+   jsr spull_1
+   ldy #0
+   lda (TEMP2),y
+   sta TEMP1
+   stz TEMP1+1
+   jmp this
+;
+; (0b a -- )  0b -> [a]  --- store a byte
+def_word "c!", "c_to", 0 
+   jsr spull_1   ; load address
+   jsr spull_0   ; load byte to store (TEMP1 lsb only)
+   ldy #0
+   lda TEMP1    ; ignore upper byte
+   sta (TEMP2),y
+   jmp next
+;
+; ( -- 2)   - : cells lit [ 2 , ] ;
+def_word "cells", "cells", 0
+   lda #2
+   sta TEMP1
+   stz TEMP1+1
+   jmp this
+
+; ( -- 32)   - : bl lit [ 1 2* 2* 2* 2* 2* , ] ;
+def_word "spc", "spc", 0
+   lda #$20
+   sta TEMP1
+   stz TEMP1+1
+   jmp this
 
 ; (? -- ?)                - ': lit rp @ @ dup 2 + rp @ ! @ ;'
-;      DOESN'T QUITE WORK YET, BUT CLOSE
+;      DOESN'T WORK, ugh.
 ;
-def_word "litx", "literal", 0       ; renaming for now, since don't work
-   ldy #TEMP3           
-   jsr rpull            ; 'rp @' more or less, w/o push to DS
-   ldx #TEMP3           
-   jsr FETCH_WX         ; copy from ((RTPTR)) to TEMP2 to TEMP1, push - '@'
-                       ; 'dup' - already in TEMP1, so don't need to push/pull again
-   lda TEMP1           ; '2 +'
-   clc
-   adc #2              
-   bcc LITSKIP
-   inc TEMP1+1
-LITSKIP:       
-   ldy #TEMP1
-   jsr rpush           ; 'rp @ !'  - alreay in TEMP1, don't need to use stack
-   jmp fetchw          ; '@'       - regular path.  addr already on stack
+; def_word "litx", "literal", 0       ; no help for it
 
 .ifdef SINGLE
 ;----------------------NUMERALS----------------------------------------
@@ -597,7 +631,72 @@ UPDTEMPSKIP:
     jsr token            ; massage the buffer, oh yeah
     jmp RESFIND           ; works perfectly!
 ;
+; ( -- )   ANSI clear screen
+def_word "Acls", "Acls", 0
+    lda #27
+    jsr WRITE_CHAR
+    lda #91
+    jsr WRITE_CHAR
+    lda #'2'
+    jsr WRITE_CHAR
+    lda #'J'
+    jsr WRITE_CHAR
+    jmp next
 ;
+; (c r -- )      ANSI screen position ESC[<r>;<c>f
+def_word "Ascr", "Ascr", 0
+    lda #27
+    jsr WRITE_CHAR
+    lda #91
+    jsr WRITE_CHAR
+    jsr spull_0
+    ldx TEMP1
+    jsr DEC2ASCII
+    lda TEMP3+1
+    cmp #$30
+    beq ASCRNXT1
+    jsr WRITE_CHAR
+ASCRNXT1:
+    lda TEMP3
+    jsr WRITE_CHAR
+    lda #';'
+    jsr WRITE_CHAR
+    jsr spull_0
+    ldx TEMP1
+    jsr DEC2ASCII
+    lda TEMP3+1
+    cmp #$30
+    beq ASCRNXT2
+    jsr WRITE_CHAR
+ASCRNXT2:
+    lda TEMP3
+    jsr WRITE_CHAR
+    lda #'f'
+    jsr WRITE_CHAR    
+    jmp next
+;
+; (c -- )      ANSI attributes ESC[<c>m
+def_word "Acol", "Acol", 0
+    lda #27
+    jsr WRITE_CHAR
+    lda #91
+    jsr WRITE_CHAR
+    jsr spull_0
+    ldx TEMP1
+    jsr DEC2ASCII
+    
+    jsr DUMPREG
+    
+    lda TEMP3+1
+    cmp #$30
+    beq ACOLNXT2
+    jsr WRITE_CHAR
+ACOLNXT2:
+    lda TEMP3
+    jsr WRITE_CHAR
+    lda #'m'
+    jsr WRITE_CHAR    
+    jmp next
 ;----------------------------------------------------------------------------
 HYWORDS_END:
 ;  end hywords.s
