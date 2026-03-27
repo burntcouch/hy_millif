@@ -75,9 +75,46 @@ def_word "r>", "r_to_s", 0
 ;   next up:  
 ;
 ;
-; : branch rp @ @ dup @ + rp @ ! ;
-; : ?branch nb not rp @ @ @ 2 - and rp @ @ + 2 + rp @ ! ;
+;   HANDY FRAGMENTS
 ;
+Fbranch:
+     ldy #0
+     lda (INSTPTR), y
+     sta TEMP4
+     iny
+     lda (INSTPTR), y
+     sta TEMP4+1
+     sta INSTPTR+1
+     lda TEMP4
+     sta INSTPTR
+     rts
+;     
+Fskip:
+     lda INSTPTR                   ; 'skip' (IP += 2)
+     clc
+     adc #2
+     sta INSTPTR
+     bcc FskipEnd
+     inc INSTPTR+1
+FskipEnd:
+     rts
+;
+;
+;def_word "branch", "branch", 0
+;     jsr Fbranch
+;     jmp next
+
+;def_word "?branch", "qbranch", 0
+;     jsr spull_0
+;     lda TEMP1
+;     ora TEMP1+1
+;     bne QBRASKIP
+;     jsr Fskip
+;     jmp next
+;QBRASKIP:
+;     jsr Fbranch
+;     jmp next
+
 ;         Get next byte off INBUF, advance CURBUF
 def_word "in>", "intib", 0
    stz TEMP1+1
@@ -122,9 +159,22 @@ def_word "spc", "spc", 0
    jmp this
 
 ; (? -- ?)                - ': lit rp @ @ dup 2 + rp @ ! @ ;'
-;      DOESN'T WORK, ugh.
+;                     OR  - [IP] PUSH DS, IP += 2, next    
+;   
+;                                 surely it isn't THIS easy...
+def_word "lit", "literal", 0       
+     ldy #0
+     lda (INSTPTR),y
+     sta TEMP1
+     iny
+     lda (INSTPTR),y
+     sta TEMP1+1
+     jsr spush_0
+     jsr Fskip
+LITXSKIP:
+     jmp next
 ;
-; def_word "litx", "literal", 0       ; no help for it
+; 
 
 .ifdef SINGLE
 ;----------------------NUMERALS----------------------------------------
@@ -586,14 +636,14 @@ def_word "2over", "over2", 0
    jsr spush_1  ;  'b' again
    jmp next
 ;
+CLOADMSG:
+   .byte "load>"
+   .byte 0
 ; (a -- )       load a compile-able script from memory, zero term'd
 def_word "cload", "cload", 0
-    lda #$0D
-    jsr WRITE_CHAR
-    lda #$0A
-    jsr WRITE_CHAR
-    lda #'-'
-    jsr WRITE_CHAR
+    stz ALFLAG         ; clear autoload flag
+CLOAD_IN:
+    WSEQ_raw CLOADMSG
     jsr spull_0  ; address from stack to TEMP1
     ldy #0
     lda #$20
@@ -626,10 +676,13 @@ CLOAD_CONT:
     sta TEMP1
     bcc UPDTEMPSKIP
     inc TEMP1+1
+                    ; handling of 'autoload' was here
 UPDTEMPSKIP:
     jsr spush_0        ; push next addr on stack if wanted
     jsr token            ; massage the buffer, oh yeah
     jmp RESFIND           ; works perfectly!
+;
+;
 ;
 ; ( -- )   ANSI clear screen
 def_word "Acls", "Acls", 0
@@ -684,9 +737,6 @@ def_word "Acol", "Acol", 0
     jsr spull_0
     ldx TEMP1
     jsr DEC2ASCII
-    
-    jsr DUMPREG
-    
     lda TEMP3+1
     cmp #$30
     beq ACOLNXT2
@@ -697,6 +747,126 @@ ACOLNXT2:
     lda #'m'
     jsr WRITE_CHAR    
     jmp next
+;
+;--------------------------RANDOM #'s
+; ( s s -- )   random # 
+def_word "rseed", "rseed", 0
+    jsr spull_0
+    lda TEMP1
+    sta RSEED
+    lda TEMP1+1
+    sta RSEED+1
+    jsr spull_0
+    lda TEMP1
+    sta RSEED+2
+    lda TEMP1+1
+    sta RSEED+3
+    jmp next
+; ( -- r)          16 bit rand -> stack
+;
+def_word "rand", "rand", 0
+    jsr galois32o
+    jmp RAND32IN
+;
+; ( -- r r)          32 bit rand -> stack
+def_word "rand32", "rand32", 0
+    jsr galois32o
+    lda RSEED+2
+    sta TEMP1
+    lda RSEED+3
+    sta TEMP1+1
+    jsr spush_0
+RAND32IN:    
+    lda RSEED
+    sta TEMP1
+    lda RSEED+1
+    sta TEMP1+1
+    jsr spush_0    
+    jmp next
+;
+; (ux um -- rh rl)      16x16 multiply, result in reverse order
+; faster if TEMP2 (um) is smaller of two.  Need a MIN/MAX swap routine!
+;
+def_word "min", "min16", 0
+    jsr spull_1
+    jsr spull_0
+MININ16:
+    lda TEMP1+1
+    cmp TEMP2+1
+    bcc MINSWAP
+    lda TEMP1
+    cmp TEMP2
+    bcc MINSWAP
+    jmp MINDONE
+MINSWAP:
+    jsr spush_1
+    jsr spush_0
+    jmp next
+MINDONE:
+    jsr spush_0
+    jsr spush_1
+    jmp next
+
+def_word "*", "mult16", 0
+    jsr spull_1
+    jsr spull_0
+    lda TEMP1            ; handle zeros  3/22 1320
+    ora TEMP1+1
+    beq m16zero          ; if either is 0-0, can skip to end
+    lda TEMP2         
+    ora TEMP2+1
+    beq m16zero          ; TEMP2 is zero?  same deal.
+    jsr MULT16
+    bra m16push
+m16zero:
+    stz TEMP1
+    stz TEMP1+1
+    stz TEMP3
+    stz TEMP3+1
+m16push:
+    jsr spush_2           ; MSbyte
+    jsr spush_0           ; push LSbyte in TEMP1 on top
+    jmp next
+    
+;
+; (ux um -- r m)      16x16 divide, result + MOD
+;
+def_word "/", "div16", 0
+    jsr spull_1
+    jsr spull_0
+    lda TEMP1            ; handle zeros  3/22 1320
+    ora TEMP1+1
+    beq d16zero         ; shortcut!
+    lda TEMP2
+    bne d16skip0
+    ora TEMP2+1
+    bne d16skip1
+    jmp div0err                     ; divide by zero error
+d16skip0:
+    cmp #1
+    bne d16skip1
+    lda TEMP2+1
+    bne d16skip1                    
+    bra d16rzero                   ; dividing by 1, just return TEMP1
+d16skip1:
+    jsr DIV16                      ; results TEMP2, remainder TEMP3
+    jmp d16done
+d16zero:
+    stz TEMP1
+    stz TEMP1+1
+d16rzero:
+    stz TEMP3
+    stz TEMP3+1
+d16done:
+    jsr spush_2        ; remainder first
+    jsr spush_0        ; result on top
+    jmp next
+;
+;                      divide by zero error
+div0err:                      ; pop jsr off stack, throw error
+    lda #ERR_DIV0
+    sta ERRFLAG
+    jmp errrtn    
 ;----------------------------------------------------------------------------
 HYWORDS_END:
 ;  end hywords.s

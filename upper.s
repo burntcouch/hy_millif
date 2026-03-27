@@ -28,7 +28,7 @@ ERREND:
 err_jumptable:
     .res 2
     ERR_entry PTR_ERR    ; stack full  - error 1
-    ERR_entry NUM_ERR    ; number not right - error 2
+    ERR_entry DIV_ERR    ; divide by zero - error 2
     ERR_entry OOM_ERR    ; out of memory  - error 3
     ERR_entry UKW_ERR    ; no existing word - error 4
 LASTERR = 4
@@ -37,8 +37,8 @@ LASTERR = 4
 PTR_ERR:
     .byte " !PTR ERROR!"
     .byte 0
-NUM_ERR:
-    .byte " !BAD #!"
+DIV_ERR:
+    .byte " !DIV ZERO!"
     .byte 0
 OOM_ERR:
     .byte " !LOW MEM!"
@@ -46,8 +46,108 @@ OOM_ERR:
 UKW_ERR:
     .byte " !UNK WORD!"
     .byte 0
+;-------------------------------------------------------------
+;                MATH routines
+;         with MULT16 / DIV16, signs handled by calling word.
+;         we just do the math here.
+;
+; MULT16 not quite right; no fuck!  Complete botch, start again. (3/27)
+;
+MULT16:                ; 16 x 16 multiply; TEMP1 and TEMP2 are #'s, TEMP1 will be result
+    stz TEMP3          ; with TEMP3 as high bytes
+    stz TEMP3+1      
+    ldx #17
+    clc
+MULTLOOP:
+    ror TEMP3+1        ; RIGHT.  if you need to go backwards, go backwards stupid fuck.
+    ror TEMP3
+    ror TEMP1+1
+    ror TEMP1
+    bcc MULTDECCNT
+    clc
+    lda TEMP2
+    adc TEMP3
+    sta TEMP3
+    lda TEMP2+1
+    adc TEMP3+1
+    sta TEMP3+1
+MULTDECCNT:
+    dex
+    bne MULTLOOP
+    rts
+    
 ;
 ;
+       ; 16 x 16 divide; TEMP1 and TEMP2 #'s - TEMP3 is 'overflow'
+       ;  TEMP2 divisor, TEMP1 dividend, TEMP1 + 3 = result + remainder  
+DIV16:
+    stz TEMP3
+    stz TEMP3+1
+    ldx #16
+UDIVLP:
+    rol TEMP1              
+    rol TEMP1+1
+    rol TEMP3
+    rol TEMP3+1
+UDIVCHK:
+    sec
+    lda TEMP3
+    sbc TEMP2
+    tay
+    lda TEMP3+1
+    sbc TEMP2+1
+    bcc UDIVCNT
+    sty TEMP3
+    sta TEMP3+1
+UDIVCNT:    
+    dex
+    bne UDIVLP
+    rol TEMP1
+    rol TEMP1+1
+    rts
+;
+;     galois32o - LSFR psuedo-random # generator
+;
+;  -- boilerplate --
+; 6502 LFSR PRNG - 32-bit
+; Brad Smith, 2019
+; http://rainwarrior.ca
+;
+;
+galois32o:
+	; rotate the middle bytes left
+	ldy RSEED+2 ; will move to RSEED+3 at the end
+	lda RSEED+1
+	sta RSEED+2
+	; compute RSEED+1 ($C5>>1 = %1100010)
+	lda RSEED+3 ; original high byte
+	lsr
+	sta RSEED+1 ; reverse: 100011
+	lsr
+	lsr
+	lsr
+	lsr
+	eor RSEED+1
+	lsr
+	eor RSEED+1
+	eor RSEED+0 ; combine with original low byte
+	sta RSEED+1
+	; compute RSEED+0 ($C5 = %11000101)
+	lda RSEED+3 ; original high byte
+	asl
+	eor RSEED+3
+	asl
+	asl
+	asl
+	asl
+	eor RSEED+3
+	asl
+	asl
+	eor RSEED+3
+	sty RSEED+3 ; finish rotating byte 2 into 3
+	sta RSEED+0
+	rts
+
 ;-----------------------   NUMBER CONVERSIONS
 ;
 DEC2ASCII:       ;  X is # - return as two digits in TEMP3, TEMP3+1
@@ -108,9 +208,6 @@ DIG_SNG:
     jmp DIGCONV_ERR
   .endif     
 DIGCONV_LOOP:
-
-    jsr DUMPREG
-
 		jsr GETDIG
     bcc DIGCONT0
     jmp DIGCONV_ERR
@@ -193,7 +290,6 @@ DIGCONT4:
     clc
 		rts
 DIGCONV_ERR:
-    jsr DUMPREG
     sec
 		rts
 
