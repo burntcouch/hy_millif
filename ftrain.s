@@ -6,9 +6,7 @@ ftrain_0:
 .byte 0
 .byte ": branch rp @ @ dup @ + rp @ ! ;"
 .byte 0
-.byte ": ?branch nb not rp @ @ @ 2 - and rp @ @ + 2 + rp @ ! ;"
-.byte 0
-.byte ": lit rp @ @ dup 2 + rp @ ! @ ;"
+.byte ": ?branch 0# invert rp @ @ @ 2 - and rp @ @ + 2 + rp @ ! ;"
 .byte 0
 .byte ": ['] rp @ @ dup 2 + rp @ ! @ ;"
 .byte 0

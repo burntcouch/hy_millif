@@ -155,9 +155,10 @@ HYWORDS := 1      ; add in additional hardcoded words / logic
 ; error codes
 ;
 ERR_PTR := $01
-ERR_NUM := $02
+ERR_DIV0 := $02
 ERR_MEM := $03
 ERR_UKW := $04
+
 ;
 ;---------------------------------------------------------------------
 ;                CHARACTER CONSTANTS
@@ -217,7 +218,7 @@ INROM = $A000
 ;                   ZERO PAGE USAGE
 ;----------------------------------------------------------------------
 .segment "ZP"
-.org $D8
+.org $D6
 ZPSTART:
 ;
 ;                   HyForth setup stuff
@@ -230,9 +231,9 @@ ERRPTR:
    .res 2          ; ptr to mitigation/message
 DIGBASE:
    .res 1          ; base for number conversion
-SCR1:        
-   .res 2          ; spare space
-SCR2:
+RSEED:        
+   .res 4          ; random # seed
+ALFLAG:            ; autoload flag
    .res 1          ; spare space
 ;
 ;
@@ -333,7 +334,8 @@ reset:
     sty RTPTR + 1 
     
     lda #1                       ; DEBUG OFF by default
-    sta DFLAG    
+    sta DFLAG
+    
     
 abort:                            ; clear DS
     ldy #<DSEND
@@ -348,6 +350,7 @@ errrtn:                          ; DS/RT pointers left alone
     stz INBUF     ; clear INBUF stuff
     stz CURBUF    ; clear cursor  (pointer into INBUF)
     stz STATUS    ; status is 'interpret' == \0
+    stz ALFLAG                   ; autoload flag OFF
     
     .byte $2c       ; mask next two bytes, nice trick !
 
@@ -359,16 +362,20 @@ resolvept:
 
 ;---------------------------------------------------------------------
 okey:
-   ;  ;-- more trouble than worth right now?
+   ; eventually we want to print 'OK', but...not here.
     
 resolve:           ; get a token
-    jsr token
-    
+ ; 
+ ; handling of 'autoload' was here
+ ;
+    jsr token      ; then just process the regular way
+.ifdef DEBUG    
     lda DFLAG                 ; DEBUG
     bne RVPSKIP    
     WCRLF_np
     lda #'P'
     jsr WRITE_CHAR            ; DEBUG
+.endif
     
 RVPSKIP:
 
@@ -427,24 +434,29 @@ eval:
     bmi immediate      
 
 compile:          ; otherwise compile
+.ifdef DEBUG  
     lda DFLAG          ; DEBUG, print C if here
     bne CMPSKIP    
     WCRLF_np
     lda #'C'
     jsr WRITE_CHAR   
 CMPSKIP:
+.endif
     jsr wcomma
     bcs immediate
     jmp resolve
 ;    
 immediate:
 execute:
+
+.ifdef DEBUG  
     lda DFLAG         ; DEBUG, print E if here
     bne EXESKIP    
     WCRLF_np
     lda #'E'
     jsr WRITE_CHAR 
 EXESKIP:
+.endif
     lda #>resolvept     ; set up INSTPTR to run, 
     sta INSTPTR + 1     ; or return to interpreter.
     lda #<resolvept
@@ -514,9 +526,10 @@ TOKENSCAN:  ; scan spaces
     dey   ; keep y == <end of input word> + 1  
     sty CURBUF 
 
-TOKENDONE:  ; find size and store it
-    jsr DUMPREG                        ; DEBUG
-    
+TOKENDONE:  ; find size and store it;
+;.ifdef DEBUG 
+;    jsr DUMPREG                        ; DEBUG
+;.endif    
     tya
     sec
     sbc NXTTOK     
@@ -547,15 +560,16 @@ TOKCLR:
       iny
       dex
       bne TOKCLR
-  
-      jsr DUMPREG               ; DEBUG
-      
+;.ifdef DEBUG    
+;      jsr DUMPREG               ; DEBUG
+;.endif     
       jmp token               ; and use 'token' to rebuild input buffer w/o converted #
 .endif  ; 'new nums' switching 
 
 TOKENEND:
-    jsr DUMPREG
-    
+;.ifdef DEBUG  
+;    jsr DUMPREG
+;.endif
     clc     ; clean - setup token  
     rts
 
@@ -823,39 +837,39 @@ FETCH_WX:                    ; set X from somewhere else
 ;-----------------------IMMEDIATE, '[', ']', ','-----------------------
 def_word "I", "Imm", 0   
 wimm:                        ; jmp here if proccessing a compiled
-    lda LASTHEAP+1           ;  ...word that needs to be 'immediate'.
+    lda LASTHEAP+1           ;   word that needs to run 'immediate'.
     sta TEMP4+1
-    lda LASTHEAP             ; get addr of 'last' compiled word
+    lda LASTHEAP             ; get addr of 'last' compiled word, copy to TEMP4, add 2
     clc
-    adc #2                   ; calc where length byte is
+    adc #2                   ; ..to find where length byte is...
     sta TEMP4                  
     bcc IMMSKIP
     inc TEMP4+1
 IMMSKIP:
     ldy #0
     lda (TEMP4),y
-    ora #$80                 ; set bit 7 and store
+    ora #$80                 ; ...set bit 7 and store
     sta (TEMP4),y
     jmp next
 
-def_word "[", "leftbrack", FLAG_IMM       ; switch to 'interpretive mode?'
+def_word "[", "leftbrack", FLAG_IMM       ; switch to 'interpret'
     stz STATUS
     jmp next
 
-def_word "]", "rtbrack", 0               ; and then back to compile?
+def_word "]", "rtbrack", 0               ; switch back to 'compile'
     lda #1
     sta STATUS
     jmp next
     
-def_word ",", "xcomma", 0                ; store data and adjust 
-    jsr spull_0                          ; heap pointers to hop
-    ldy #0                               ; over allocated cell
+def_word ",", "xcomma", 0                ; pull data from top of stack, store at 'here', adjust
+    jsr spull_0                          ; 'here' to point at next cell
+    ldy #0                               
     lda TEMP1
-    sta (NEXTHEAP),y
+    sta (NEXTHEAP),y                     ; POP DS TO TEMP1, [here] = TEMP1
     iny
     lda TEMP1+1
     sta (NEXTHEAP),y
-    lda NEXTHEAP
+    lda NEXTHEAP                         ; here += 2
     clc
     adc #2
     sta NEXTHEAP
@@ -866,17 +880,14 @@ COMMASKIP:
     
 ;--------------------------------------------SEMIS-----------------
 def_word ";", "semis",  FLAG_IMM
-; update LASTHEAP, copy pointer to BACKHEAP if something goes wrong in ':'
     lda BACKHEAP 
-    sta LASTHEAP
+    sta LASTHEAP                ; bring back BACKHEAP to LASTHEAP
     lda BACKHEAP + 1 
     sta LASTHEAP + 1
 
-; stat is 'interpret'
-    stz STATUS
+    stz STATUS                  ; set status to 'interpret' (presumably from 'compile')
 
-; compound words must ends with exit
-finish:
+finish:                         ; compiled words must end with exit
     lda #<exit
     sta WORKREG
     lda #>exit
@@ -889,14 +900,12 @@ finish:
 ;
 ;------------------------------------------COMPILE------------------
 def_word ":", "colon", 0
-; save here, panic if semis not follow elsewhere
     lda NEXTHEAP
-    sta BACKHEAP 
+    sta BACKHEAP                ; backup NEXTHEAP to BACKHEAP
     lda NEXTHEAP + 1
     sta BACKHEAP + 1 
 
-; stat is 'compile'
-    lda #1
+    lda #1                      ; set status to 'compile'
     sta STATUS
 
 COMPHEADER:
@@ -904,26 +913,24 @@ COMPHEADER:
     ldy #LASTHEAP
     jsr comma                    ; change NEXTHEAP to point to LASTHEAP
 
-; keep processing tokens
-    jsr token
+    jsr token                    ; get next token
 
-; copy it
-    ldy #0
+    ldy #0                       ; copy it to heap: length, name, and...code fields (later)
 COMPLOOP:    
     lda (NXTTOK), y
-    cmp #$20                ; stops at space
+    cmp #$20                
     beq COMPEND
     sta (NEXTHEAP), y
     iny
     bne COMPLOOP
 
 COMPEND:
-    tya                    ; and update NEXTHEAP
+    tya                          ; and update NEXTHEAP
     ldx #(NEXTHEAP)
     jsr addwx
 
 ;~~~~~~~~ all done....
-    jmp next
+    jmp next                     ; and then see below; compiled word 
 ;---------------------------------------------------------------------
 ; Thread Code Engine
 ;
@@ -937,39 +944,35 @@ COMPEND:
 ;---------------------------------------------------------------------
 ; ( -- ) 
 def_word "exit", "exit", 0
-unnest:                      ;    this is EXIT but not all of it...
-                             ; get IP from RT, incr RTPTR: INSTPTR = [RTPTR], RTPTR += 2 
+unnest:                      ; EXIT - done with previous word, on to next whether compiled or primitive
+                            
     ldy #INSTPTR
-    jsr rpull
+    jsr rpull                ; IP = [RTPTR], RTPTR += 2
 
-next:                        ;    go on to next word, update W, incr IP
+next:                        ;    go on to next word; IP is pointing at next entry in data field of word
 ; WORKREG = (INSTPTR) ; INSTPTR += 2
-    ldx #INSTPTR
+    ldx #INSTPTR              
     ldy #WORKREG
-    jsr copyfrom
+    jsr copyfrom             ; W = [IP], IP += 2  ( and either ENTER or EXECUTE )
 
-                           ;   is the next word compiled or hardcoded?
-                           ;
-                           ; FIX, this sucks - NEED TO SWITCH a DIFFERENT WAY here.
-                           ;
-pick:
+                          ; FIX, this sucks in many ways...bit 6 of length byte set for primitives?
+pick:                     ;                COMPILED OR PRIMITIVE?
     lda WORKREG + 1       ; compare pages (MSBs)
     cmp #>ends + 1        ;  !! Compiled must be higher in memory than hardcoded !! (see below)
     bmi jump              ; jump over nest if not a compiled word
 
-nest:                     ; ENTER in classic Forth lingo
-                          ; push, *rp = INSTPTR, rp -=2   ; push [IP] on RT, decrement RTPTR
+nest:                     ; ENTER in classic Forth lingo   ( COMPILED )
     ldy #INSTPTR
-    jsr rpush
-    lda WORKREG                 ; update IP to W
+    jsr rpush                   ; [RTPTR] = [IP], RTPTR -=2 
+    lda WORKREG                 ; W = IP
     sta INSTPTR
     lda WORKREG + 1
     sta INSTPTR + 1
-    jmp next
+    jmp next                    ; next
 
-jump: 
-    jmp (WORKREG)          ; start running code at next word, if hardcoded.
-                           ;  'next' will bring us back...
+jump:                      ; EXECUTE                      ( PRIMITIVE )
+    jmp (WORKREG)          ; start running code at next word
+                           ;  JUMP [W]
            
 ;-----------------------------------------------------------------------
 ; BEWARE, MUST BE AT END! MINIMAL THREAD CODE DEPENDS ON IT!
