@@ -77,7 +77,7 @@ def_word "r>", "r_to_s", 0
 ;
 ;   HANDY FRAGMENTS
 ;
-Fbranch:
+Fbranch:                          ; [IP] = IP
      ldy #0
      lda (INSTPTR), y
      sta TEMP4
@@ -100,11 +100,11 @@ FskipEnd:
      rts
 ;
 ;
-;def_word "branch", "branch", 0
+;def_word "branch", "branch", 0        ; [IP] = IP  next
 ;     jsr Fbranch
 ;     jmp next
 
-;def_word "?branch", "qbranch", 0
+;def_word "?branch", "qbranch", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
 ;     jsr spull_0
 ;     lda TEMP1
 ;     ora TEMP1+1

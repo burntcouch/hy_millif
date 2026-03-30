@@ -98,6 +98,45 @@ makelabel "", label
       pla
 .endmacro
 
+;
+;   ANSI screen stuff
+; <rr>;<cc>f move cursor to rr,cc
+; <cc>m for color/attributes
+; 2J for clear screen
+; H for 'home'
+; <cc>[ABCD] screen moves
+;
+.macro ANSI b1,b2,b3,b4,b5,b6
+      pha
+      lda #27
+      jsr WRITE_CHAR
+      lda #91
+      jsr WRITE_CHAR
+      lda #b1
+      jsr WRITE_CHAR
+.ifnblank b2
+      lda #b2
+      jsr WRITE_CHAR
+.ifnblank b3
+      lda #b3
+      jsr WRITE_CHAR
+.ifnblank b4
+      lda #b4
+      jsr WRITE_CHAR
+.ifnblank b5
+      lda #b5
+      jsr WRITE_CHAR
+.ifnblank b6
+      lda #b6
+      jsr WRITE_CHAR
+.endif 
+.endif 
+.endif
+.endif
+.endif
+      pla
+.endmacro
+
 ;---------------------------------------------------------------------
 ;  for error messages
 ;
@@ -178,7 +217,7 @@ FLAG_IMM = 1<<7
 ; getline, token, skip, scan, depends on page boundary
 ; INBUF = $0400  (see segment STACKS below)
 ; moves forwards
-INBUF_end = $FF
+INBUF_end = $FD
 
 ; data stacks
 ; moves backwards, push decreases before copy
@@ -267,6 +306,9 @@ TEMP4:    .word $0 ; fourth
 
 NXTTOK:   .word $0 ; next token in tib (INBUF)
 BACKHEAP:   .word $0 ; hold 'here while compile
+TEMP5:   .res 1     ; byte temp
+TEMP6:   .res 1     ; byte temp
+TEMP7:   .word $0   ; word temp
 ;
 ;  $FC - $FF in reserve
 ;
@@ -340,11 +382,14 @@ reset:
 abort:                            ; clear DS
     ldy #<DSEND
     sty DSPTR
+
+errrtn:                          ; try this instead - RT seems to
+                                 ;  get trashed sometimes on 'unknown word'
 quit:                             ; clear RT
     ldy #<RTEND
     sty RTPTR
 
-errrtn:                          ; DS/RT pointers left alone
+;errrtn:                          ; DS/RT pointers left alone
     jsr wrterror                 ; print any error messages   
     ldy #0          ; reset INBUF
     stz INBUF     ; clear INBUF stuff
@@ -362,7 +407,6 @@ resolvept:
 
 ;---------------------------------------------------------------------
 okey:
-   ; eventually we want to print 'OK', but...not here.
     
 resolve:           ; get a token
  ; 
@@ -483,6 +527,9 @@ GETLOOP:
     iny
     cpy #INBUF_end
     beq GETLNEND
+    cpy #$FF
+    bne GETREADLOOP
+    ldy #1
 GETREADLOOP:
     jsr READ_CHAR
     bcc GETREADLOOP
@@ -527,9 +574,9 @@ TOKENSCAN:  ; scan spaces
     sty CURBUF 
 
 TOKENDONE:  ; find size and store it;
-;.ifdef DEBUG 
-;    jsr DUMPREG                        ; DEBUG
-;.endif    
+.ifdef DEBUG 
+    jsr DUMPREG                        ; DEBUG
+.endif    
     tya
     sec
     sbc NXTTOK     
@@ -559,12 +606,9 @@ TOKCLR:
       sta (NXTTOK),y
       iny
       dex
-      bne TOKCLR
-;.ifdef DEBUG    
-;      jsr DUMPREG               ; DEBUG
-;.endif     
+      bne TOKCLR     
       jmp token               ; and use 'token' to rebuild input buffer w/o converted #
-.endif  ; 'new nums' switching 
+.endif  ; 'numbers'
 
 TOKENEND:
 ;.ifdef DEBUG  
