@@ -75,8 +75,8 @@ def_word "r>", "r_to_s", 0
 ;   next up:  
 ;
 ;
-;   HANDY FRAGMENTS
-;
+;   HANDY FRAGMENTS   - 033126 - neither branch nor ?branch currently work.  Ugh
+;                          
 Fbranch:                          ; [IP] = IP
      ldy #0
      lda (INSTPTR), y
@@ -87,7 +87,7 @@ Fbranch:                          ; [IP] = IP
      sta INSTPTR+1
      lda TEMP4
      sta INSTPTR
-     rts
+     jmp next
 ;     
 Fskip:
      lda INSTPTR                   ; 'skip' (IP += 2)
@@ -97,23 +97,18 @@ Fskip:
      bcc FskipEnd
      inc INSTPTR+1
 FskipEnd:
-     rts
+     jmp next
 ;
 ;
-;def_word "branch", "branch", 0        ; [IP] = IP  next
-;     jsr Fbranch
-;     jmp next
-
-;def_word "?branch", "qbranch", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
-;     jsr spull_0
-;     lda TEMP1
-;     ora TEMP1+1
-;     bne QBRASKIP
-;     jsr Fskip
-;     jmp next
-;QBRASKIP:
-;     jsr Fbranch
-;     jmp next
+def_word "bbra", "bbra", 0        ; [IP] = IP  next
+     jmp Fbranch
+;
+def_word "?bra", "qbra", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
+     jsr spull_0                      ;  above may be backwards, logically?
+     lda TEMP1
+     ora TEMP1+1
+     beq Fskip                       
+     jmp Fbranch
 
 ;         Get next byte off INBUF, advance CURBUF
 def_word "in>", "intib", 0
@@ -170,9 +165,7 @@ def_word "lit", "literal", 0
      lda (INSTPTR),y
      sta TEMP1+1
      jsr spush_0
-     jsr Fskip
-LITXSKIP:
-     jmp next
+     jmp Fskip
 ;
 ; 
 
@@ -784,9 +777,8 @@ RAND32IN:
     jsr spush_0    
     jmp next
 ;
-; (ux um -- rh rl)      16x16 multiply, result in reverse order
-; faster if TEMP2 (um) is smaller of two.  Need a MIN/MAX swap routine!
-;
+; (u1 u2 -- ux um)  min
+; (u1 u2 -- um ux)  max      
 def_word "min", "min16", 0
     jsr spull_1
     jsr spull_0
@@ -806,7 +798,22 @@ MINDONE:
     jsr spush_0
     jsr spush_1
     jmp next
-
+    
+def_word "max", "max16", 0
+    jsr spull_1
+    jsr spull_0
+    lda TEMP1+1
+    cmp TEMP2+1
+    bcc MINDONE
+    lda TEMP1
+    cmp TEMP2
+    bcc MINDONE
+    jmp MINSWAP
+    
+;
+; (ux um -- rh rl)      16x16 multiply, result in reverse order
+; faster if TEMP2 (um) is smaller of two.  Need a MIN/MAX swap routine!
+;
 def_word "*", "mult16", 0
     jsr spull_1
     jsr spull_0
@@ -867,6 +874,29 @@ div0err:                      ; pop jsr off stack, throw error
     lda #ERR_DIV0
     sta ERRFLAG
     jmp errrtn    
+;
+;------------------------------MEMORY OPERATIONS----------------------------
+;
+; (as ae ad -- )    copy from $as thru $ae to $ad
+def_word "memcpy", "memcpy", 0
+    jsr spull_2              ; dest addr
+    jsr spull_1              ; end
+    jsr spull_0              ; start
+    lda TEMP1+1
+    cmp TEMP2+1
+    bcc MEMCPYDOIT
+    bne MEMCPYEND
+    lda TEMP1
+    cmp TEMP2
+    bcs MEMCPYEND
+MEMCPYDOIT:
+    lda #1
+    sta supprint
+    jsr MEMCPY
+    stz supprint
+MEMCPYEND:
+    jmp next
+    
 ;----------------------------------------------------------------------------
 HYWORDS_END:
 ;  end hywords.s

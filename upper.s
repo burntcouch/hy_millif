@@ -154,25 +154,56 @@ TEXTGET:
     stz TEMP4
 		stz TEMP1
 		stz TEMP1+1
-    ldy #0
-    ldx #0
+    ldy #1               ; skip len
+TXTSKIPSPC:
     lda (NXTTOK),y
+    cmp #$20             ; skip leading spaces
+    bne TXTSPCS
+    iny
+    bra TXTSKIPSPC
+TXTSPCS:
     cmp #'q'
     bne TEXTNOGOOD
     iny
     lda (NXTTOK),y
     cmp #'^'
     bne TEXTNOGOOD
-    iny    
-TEXTGLOOP:
-    lda (NXTTOK),y
-    sta TEMP4
+    sta TEMP3              ; remember....
+    iny
+TXTSCAN:
+    lda (NXTTOK),y         ; find delimiting '^' 
+    iny
     cmp #'^'
-    beq TEXTOK
-    lda NXTTOK
-    cmp INBUF_end
-    beq TEXTNOGOOD
+    beq TXTFOUND
     tya
+    clc
+    adc NXTTOK
+    cmp #MAXSTR
+    bcs TEXTNOGOOD
+    bra TXTSCAN
+TXTFOUND:
+    ldx #0
+    dey
+    dey              ; now points at last letter
+    tya
+    sec
+    sbc TEMP3        ; and this should be the length
+    stx TEMP3
+    and #1
+    beq TEXTGLOOP
+    inc TEMP3
+    inx
+TEXTGLOOP:
+    lda (NXTTOK),y         
+    cmp #'^'               ; when we hit the other end again...
+    beq TEXTOK
+    sta TEMP4
+    
+.ifdef DEBUG
+    jsr DUMPREG          ; DEBUG
+.endif
+
+    txa
     and #1
     bne TEXTODD
     lda TEMP4
@@ -182,20 +213,34 @@ TEXTGLOOP:
 TEXTODD:
     lda TEMP4
     sta TEMP1+1
+    phx
+    phy
     jsr spush_0
+    ply
+    plx
 TEXTSKIP2:
     inx
-    iny
-    bra TEXTGLOOP
+    dey
+.ifdef DEBUG
+    jsr DUMPREG          ; DEBUG
+.endif    
+   bra TEXTGLOOP
 TEXTOK:
-    tya
+    phy
+    phx
+    txa
     and #1
     beq TEXTCONT
     jsr spush_0
 TEXTCONT:
-    stx TEMP3
+    plx
+    txa
+    sec
+    sbc TEMP3
+    sta TEMP3
     stz TEMP3+1
     jsr spush_2         ; push length on top
+    ply
     clc
     bra TEXTGEND
 TEXTNOGOOD:

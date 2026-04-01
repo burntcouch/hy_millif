@@ -157,92 +157,99 @@ FDUMPGET:
 ;
 ; ( -- ) clean word list, 
 def_word "wlist", "wlist", 0
-; load last
+
+; load LASTHEAP
     lda LASTHEAP + 1
     sta TEMP2 + 1
     lda LASTHEAP
     sta TEMP2
 
-; load here
+; load NEXTHEAP
     lda NEXTHEAP + 1
     sta TEMP3 + 1
     lda NEXTHEAP
     sta TEMP3
-    stz TEMP6       ; keep track of words per line
-  
-    WCRLF_np  
-WLSTLOOP1:
-    ANSI $30,'m'     ; clear attributes
-    inc TEMP6        ; count # of words per line
-    lda TEMP2        ; lsb linked list
+    
+    stz TEMP5
+    
+WORD_LOOP:
+    inc TEMP5       ; increment 'words per line' count
+    lda TEMP2       ; lsb linked list
     sta TEMP1
-    ora TEMP2 + 1    ; check if $0000  (end of list)
-    bne WLSTSKIP1
-    jmp WLSTEND  
-WLSTSKIP1:
+    ora TEMP2 + 1    ; check if TEMP2 = $0000, end if so
+    beq WORD_END
     lda TEMP2 + 1    ; msb linked list
-    sta TEMP1 + 1    ; TEMP1 stores addr of current word now
-
-; print address
+    sta TEMP1 + 1
+    
+    lda TEMP5        ; check word count, CRLF if 4th one
+    cmp #4
+    bne WORD_SKIP
+    WCRLF_np
+    stz TEMP5
+    
+WORD_SKIP:
+; put address
     lda #' '
     jsr WRITE_CHAR
-
-    lda TEMP1 + 1 
+    lda TEMP1 + 1
     jsr WRITE_BYTE
     lda TEMP1
     jsr WRITE_BYTE
-    
-    ldx #TEMP1     ; skip over link address
+
+    ldx #TEMP1          ; advance TEMP1 to name+flag
     lda #2
     jsr addwx
-                   ; put size + flag, name
-    ldy #0
-    jsr show_name   ; return size in TEMP5
-                    ; print some spaces based on length of name
-    lda #12
+    ldy #0                
+    jsr show_name        ; put size + flag, name
+    
+    lda #10
     sec
-    sbc TEMP5
+    sbc TEMP6
     tax
-WLSTSPCS:
-    lda #$20
+SPCLOOP:
+    lda #' '
     jsr WRITE_CHAR
     dex
-    bne WLSTSPCS
-    lda TEMP6
-    cmp #4
-    bne WLSTUPD
-    WCRLF_np        ; CR if 4th word   
-    stz TEMP6
-WLSTUPD:
-    iny             ; update to point to CFA (code field address)
+    bne SPCLOOP
+    lda #'|'
+    jsr WRITE_CHAR
+    
+    iny                  ; update TEMP1 again, point at CFA
     tya
     ldx #TEMP1
-    jsr addwx       
+    jsr addwx
 
-; check if is a primitive  - FIX THIS, ANOTHER WAY NECC.
-;    ANSI $33, $31, 'm'
+; check if is a primitive
+;    lda TEMP1 + 1
+;    cmp #>ends + 1
+;    bmi WORD_CONT
+;
+; list references
+;    ldy #0
+;    jsr show_refer
+     lda TEMP3           ; instead of printing refs, just advance TEMP1 to TEMP3
+     sta TEMP1
+     lda TEMP3+1
+     sta TEMP1+1
 
-    lda TEMP2            ; backup TEMP2  ( here -> next )
+WORD_CONT:
+    lda TEMP2            ; update TEMP2 and TEMP3, advance in linked list
     sta TEMP3
     lda TEMP2 + 1
     sta TEMP3 + 1
-
     ldy #0
-    lda (TEMP3), y      ;  [TEMP3] -> TEMP2  ( [here] -> TEMP2 ) 
+    lda (TEMP3), y
     sta TEMP2
     iny
     lda (TEMP3), y
-    sta TEMP2 + 1       ;  so now TEMP2 points to previous word in list 
-
-    ldx #TEMP3            ; TEMP3 += 2     (points at PFA of next word)
+    sta TEMP2 + 1
+    ldx #(TEMP3)
     lda #2
     jsr addwx
 
-    jmp WLSTLOOP1
+    jmp WORD_LOOP 
 
-WLSTEND: 
-    ANSI $30,'m'     ; clear attributes
-    WCRLF_np
+WORD_END:
     clc  ; clean
     jmp next
 ;
@@ -354,23 +361,26 @@ WORDSEND:
 ;----------------------------------------------------------------------
 ; print size and name 
 show_name:
+     lda #':'
+     jsr WRITE_CHAR
+;    lda (TEMP1), y
+;    jsr WRITE_BYTE       ; size
+    
     lda #' '
     jsr WRITE_CHAR
-    lda (TEMP1), y   ; size + flag
-    bpl SHOWNAMESK
-    ANSI $33,$31,'m'
-SHOWNAMESK:
-    and #$7F
-    jsr WRITE_BYTE
+    lda (TEMP1), y
+    and #$3F           ; mask off top two bits
     tax
-    sta TEMP5        ; save size
-SHWNAMELOOP1:        ; name
+    sta TEMP6          ; save length of name
+    
+NAMELOOP:              ; name
     iny
     lda (TEMP1), y
     jsr WRITE_CHAR
     dex
-    bne SHWNAMELOOP1
-    ANSI $30,'m'
+    bne NAMELOOP
+    lda #' '
+    jsr WRITE_CHAR
     rts
 
 ;----------------------------------------------------------------------
@@ -409,29 +419,7 @@ SHWREFLOOP:
 ;  seek for addr of 'exit' at end of sequence of references
 ;  max of 254 references in list
 ;
-seek:
-    ldy #0
-@loop1:
-    iny
-    beq @ends
-
-    lda (TEMP1), y
-    cmp #>exit
-    bne @loop1
-
-    dey 
-    lda (TEMP1), y
-    cmp #<exit
-    beq @ends
-    
-    iny
-    bne @loop1
-
-@ends:
-    tya
-    lsr
-    clc  ; clean
-    rts
+;  removed 'seek', was not used in original code
 
 ;----------------------------------------------------------------------
 ; ( u -- u ) print top of DS in hexadecimal in MSB:LSB form

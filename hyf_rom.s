@@ -7,9 +7,10 @@ COPYMAIN = COPYSTART
 RAMST = RAMSTART
 COPYENDS = ends - RAMSTART + COPYSTART
 
-COPYTORAM:
+COPYTORAM:                     ; copies from mainoff thru endsoff to ramstart
     WCRLF_np
     WCRLF_np
+    stz supprint               ; let it print
     lda #>COPYMAIN
     sta mainoff+1  
     lda #<COPYMAIN
@@ -26,7 +27,7 @@ COPYTORAM:
     lda #<RAMST
     sta ramstart
     jsr WRITE_BYTE
-
+MEMCPY:
     ldy  #0
 COPYLOOP:
     lda (mainoff),y
@@ -38,8 +39,11 @@ COPYLOOP:
     cmp endsoff+1
     beq COPYEXIT
 SKIP1:
+    lda supprint
+    bne SKIP01
     lda #'.'
     jsr WRITE_CHAR
+SKIP01:
     inc mainoff
     bne SKIP2
     inc mainoff + 1
@@ -50,6 +54,8 @@ SKIP2:
 SKIP3:
     bra COPYLOOP
 COPYEXIT:
+    lda supprint
+    bne CPRTS
     lda ramstart+1
     jsr WRITE_BYTE
     lda ramstart
@@ -58,4 +64,6 @@ COPYEXIT:
 ;
 CPEND:    
     jmp $FE00
+CPRTS:
+    rts
 
