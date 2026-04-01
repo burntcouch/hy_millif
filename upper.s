@@ -147,7 +147,107 @@ galois32o:
 	sty RSEED+3 ; finish rotating byte 2 into 3
 	sta RSEED+0
 	rts
+;-------------------------------------------------------------------
+;              get delimited text from INBUF, pack and push on stack
+;
+TEXTGET:
+    stz TEMP4
+		stz TEMP1
+		stz TEMP1+1
+    ldy #1               ; skip len
+TXTSKIPSPC:
+    lda (NXTTOK),y
+    cmp #$20             ; skip leading spaces
+    bne TXTSPCS
+    iny
+    bra TXTSKIPSPC
+TXTSPCS:
+    cmp #'q'
+    bne TEXTNOGOOD
+    iny
+    lda (NXTTOK),y
+    cmp #'^'
+    bne TEXTNOGOOD
+    sta TEMP3              ; remember....
+    iny
+TXTSCAN:
+    lda (NXTTOK),y         ; find delimiting '^' 
+    iny
+    cmp #'^'
+    beq TXTFOUND
+    tya
+    clc
+    adc NXTTOK
+    cmp #MAXSTR
+    bcs TEXTNOGOOD
+    bra TXTSCAN
+TXTFOUND:
+    ldx #0
+    dey
+    dey              ; now points at last letter
+    tya
+    sec
+    sbc TEMP3        ; and this should be the length
+    stx TEMP3
+    and #1
+    beq TEXTGLOOP
+    inc TEMP3
+    inx
+TEXTGLOOP:
+    lda (NXTTOK),y         
+    cmp #'^'               ; when we hit the other end again...
+    beq TEXTOK
+    sta TEMP4
+    
+.ifdef DEBUG
+    jsr DUMPREG          ; DEBUG
+.endif
 
+    txa
+    and #1
+    bne TEXTODD
+    lda TEMP4
+    sta TEMP1
+    stz TEMP1+1
+    bra TEXTSKIP2
+TEXTODD:
+    lda TEMP4
+    sta TEMP1+1
+    phx
+    phy
+    jsr spush_0
+    ply
+    plx
+TEXTSKIP2:
+    inx
+    dey
+.ifdef DEBUG
+    jsr DUMPREG          ; DEBUG
+.endif    
+   bra TEXTGLOOP
+TEXTOK:
+    phy
+    phx
+    txa
+    and #1
+    beq TEXTCONT
+    jsr spush_0
+TEXTCONT:
+    plx
+    txa
+    sec
+    sbc TEMP3
+    sta TEMP3
+    stz TEMP3+1
+    jsr spush_2         ; push length on top
+    ply
+    clc
+    bra TEXTGEND
+TEXTNOGOOD:
+    sec
+TEXTGEND:
+    rts
+    
 ;-----------------------   NUMBER CONVERSIONS
 ;
 DEC2ASCII:       ;  X is # - return as two digits in TEMP3, TEMP3+1
@@ -479,33 +579,37 @@ DREGNXT:
 DUMPTIB:              ; dump TIB
         php
         pha
-        ldy #0
-        sty TEMP0
         lda #>INBUF
         sta TEMP0+1
-        bra DSTKLP1
-
+        jmp DUMPPDBG
 DUMPSTACK:            ; dump DS/RT stack area
         php
         pha
-        ldy #0
-        sty TEMP0
         lda #>DS
         sta TEMP0+1
-        bra DSTKLP1
-        
+        jmp DUMPPDBG       
 DUMPZP:               ; dump ZP
         php
         pha
+        stz TEMP0+1
+        jmp DUMPPDBG
+.endif
+
+DUMPPAGE:              ; general purpose page dumper
+                       ; TEMP0 starts at zero, TEMP0+1 is page #
+        php
+        pha
+DUMPPDBG:
         ldy #0
         sty TEMP0
-        sty TEMP0+1   
-DSTKLP1:
+DUMPLOOP:
+        lda TEMP0+1
+        jsr WRITE_BYTE
         tya
         jsr WRITE_BYTE
         lda #':'
         jsr WRITE_CHAR
-DSTKLP2:
+DPLOOP2:
         lda (TEMP0), y
         jsr WRITE_BYTE
         lda #$20
@@ -513,18 +617,44 @@ DSTKLP2:
         iny
         tya
         and #$0F       ; 00001111  
-        beq  DSTKSKL   
-        bra  DSTKLP2
-DSTKSKL:
-        WCRLF_np
+        beq  DPSKIP  
+        bra  DPLOOP2
+DPSKIP:
+        lda #$20
+        jsr WRITE_CHAR
+        phy
+        tya           
+        sec
+        sbc #$10      ; subtract 16 to rewind the line
+        tay
+DPPLOOP:
+        lda (TEMP0), y   ; printable ascii
+        cmp #$20
+        bcc PPERIOD
+        cmp #$7F
+        bcs PPERIOD
+        jsr WRITE_CHAR
+        bra DPPSKIP
+PPERIOD:
+        lda #'.'
+        jsr WRITE_CHAR        
+DPPSKIP:
+        iny
         tya
-        bne DSTKLP1        
+        and #$0F
+        beq DPPEND
+        bra DPPLOOP
+DPPEND:
+        ply
+        WCRLF_np
+        tya                ; need this to check y = 0
+        bne DUMPLOOP       
 DUMPSTKEND:
         WCRLF_np
         pla
         plp
         rts
-.endif
+
 ;
 ; ---------------- end of upper.s
 ;

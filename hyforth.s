@@ -98,6 +98,45 @@ makelabel "", label
       pla
 .endmacro
 
+;
+;   ANSI screen stuff
+; <rr>;<cc>f move cursor to rr,cc
+; <cc>m for color/attributes
+; 2J for clear screen
+; H for 'home'
+; <cc>[ABCD] screen moves
+;
+.macro ANSI b1,b2,b3,b4,b5,b6
+      pha
+      lda #27
+      jsr WRITE_CHAR
+      lda #91
+      jsr WRITE_CHAR
+      lda #b1
+      jsr WRITE_CHAR
+.ifnblank b2
+      lda #b2
+      jsr WRITE_CHAR
+.ifnblank b3
+      lda #b3
+      jsr WRITE_CHAR
+.ifnblank b4
+      lda #b4
+      jsr WRITE_CHAR
+.ifnblank b5
+      lda #b5
+      jsr WRITE_CHAR
+.ifnblank b6
+      lda #b6
+      jsr WRITE_CHAR
+.endif 
+.endif 
+.endif
+.endif
+.endif
+      pla
+.endmacro
+
 ;---------------------------------------------------------------------
 ;  for error messages
 ;
@@ -169,16 +208,16 @@ LF := $0A
 ;---------------------------------------------------------------------
 ;                 CORE ENGINE CONSTANTS
 ;
-; cell size, two bytes, 16-bit
-CELL = 2    
-; highlander, immediate flag.
-FLAG_IMM = 1<<7
+CELL = 2         ; cell size, two bytes, 16-bit
+FLAG_IMM = 1<<7  ; immediate flag
+FLAG_COM = 1<<6  ; compiled flag
+MAXSTR = 100
 
 ; terminal input buffer, forward
 ; getline, token, skip, scan, depends on page boundary
 ; INBUF = $0400  (see segment STACKS below)
 ; moves forwards
-INBUF_end = $FF
+INBUF_end = $FD
 
 ; data stacks
 ; moves backwards, push decreases before copy
@@ -196,33 +235,40 @@ READ_CHAR = $F800
 WRITE_BYTE = $F8A3
 WOZMON = $FE00
 INROM = $A000
+ALTBUF = $6000
+ALTBUF_end = $77FF
+
 ;----------------------------------------------------------------------
 ;       Look closely at hyforth.cfg and the output of ca65/ld65 after
 ;  a build; the RAM and ROM code is carefully arranged when the binary
 ;  is created, to make initialization easier and optimize RAM use.
-;  The main program engine starts at $A000 and is only about 500 bytes
+;  The main program engine starts at $A000 in ROM and is only about 500 bytes
 ;  long.  Additional functions, then initialization and debug code, 
 ;  then the dictionary follow in the binary, and these stay in ROM.
 ;
 ;       The dictionary has a particular structure, with 'bye' and 'abort'
-;  at the beginning; there are some core words such as 'words', 'dump'
-;  and etc, then contents of 'primitives.s', then 'hywords.s', followed by
+;  at the beginning; there are some core words,
+;  then contents of 'primitives.s', then 'hywords.s', followed by
 ;  the end of the dictionary with critical items such as 'fetch', 'store', 
 ;  'immediate', 'compile, 'semis', 'exit, and ancillary stuff.
 ;
 ;       When $A003 is run from WozMon, a jump instruction to 'main' is
-;  copied to $0600, followed by the dictionary, with 'exit' at then end.
+;  copied to $0600, followed by the dictionary, with 'exit' at the end.
 ;  HyForth is start by running '600R' or 'A000R'.
 ;
 ;----------------------------------------------------------------------
 ;                   ZERO PAGE USAGE
 ;----------------------------------------------------------------------
 .segment "ZP"
-.org $D6
+.org $D2
 ZPSTART:
 ;
 ;                   HyForth setup stuff
 ;
+TIB:
+   .res 2          ; pointer to input buffer
+TIBEND:
+   .res 2          ; pointer to end of TIB
 DFLAG:
    .res 1          ; debug flag
 ERRFLAG:
@@ -240,21 +286,21 @@ ALFLAG:            ; autoload flag
 nil:               ; at $E0 now
 ; internal Forth 
 
-STATUS:   .word $0 ; state at lsb, last size+flag at msb
-CURBUF:   .word $0 ; CURBUF next free byte in TIB
-LASTHEAP:   .word $0 ; last link cell
-NEXTHEAP:   .word $0 ; next free cell in heap dictionary
+STATUS:     .word $0   ; state at lsb, last size+flag at msb
+CURBUF:     .word $0   ; CURBUF next free byte in TIB
+LASTHEAP:   .word $0   ; last link cell
+NEXTHEAP:   .word $0   ; next free cell in heap dictionary
 
-; pointers registers
+; pointer registers
 
-DSPTR:    .word $0 ; data stack base,
-RTPTR:    .word $0 ; return stack base
-INSTPTR:    .word $0 ; instruction pointer
-WORKREG:    .word $0 ; word pointer          rename WORKREG
+DSPTR:      .word $0   ; data stack pointer
+RTPTR:      .word $0   ; return stack pointer
+INSTPTR:    .word $0   ; instruction pointer
+WORKREG:    .word $0   ; working register
 
 ; free for use
 
-mainoff:                            ; use for COPYTORAM
+mainoff:                            ; use for COPYTORAM, MEMCPY
 TEMP1:    .word $0 ; first
 endsoff:
 TEMP2:    .word $0 ; second
@@ -265,12 +311,16 @@ TEMP4:    .word $0 ; fourth
 
 ; used, reserved
 
-NXTTOK:   .word $0 ; next token in tib (INBUF)
-BACKHEAP:   .word $0 ; hold 'here while compile
+NXTTOK:     .word $0   ; next token in tib (INBUF)
+BACKHEAP:   .word $0   ; hold 'here while compile
+supprint:             ; suppress printing in MEMCPY
+TEMP5:   .res 1     ; byte temp
+TEMP6:   .res 1     ; byte temp
+TEMP7:  .res 2   ; word temp
 ;
 ;  $FC - $FF in reserve
 ;
-;   HYDRA-16 read buffer usually at $200 or $300?  Avoid conflict for now...
+;   HYDRA-16 serial/read buffers at $200 and $300 so skip those
 ;
 ;----------------------------------------------------------------------
 ;                   FORTH STACKS
@@ -324,9 +374,15 @@ warm:
 ; various reinitialization points
 ;
 reset:
-    ldy #>INBUF                 ; INBUF (TIB) page
-    sty CURBUF + 1
-    sty NXTTOK + 1
+    ldy #INBUF_end
+    sty TIBEND
+    ldy #<INBUF
+    sty TIB
+    ldy #>INBUF
+    sty TIB+1
+    sty TIBEND+1
+    sty CURBUF+1
+    sty NXTTOK+1
     
     ldy #>DS                     ; DS and RT are now half page each
     sty DSPTR + 1
@@ -340,14 +396,18 @@ reset:
 abort:                            ; clear DS
     ldy #<DSEND
     sty DSPTR
+
+errrtn:                          ; try this instead - RT seems to
+                                 ;  get trashed sometimes on 'unknown word'
 quit:                             ; clear RT
     ldy #<RTEND
     sty RTPTR
 
-errrtn:                          ; DS/RT pointers left alone
+;errrtn:                          ; DS/RT pointers left alone
     jsr wrterror                 ; print any error messages   
     ldy #0          ; reset INBUF
-    stz INBUF     ; clear INBUF stuff
+    lda #0
+    sta (TIB),y     ; clear INBUF stuff
     stz CURBUF    ; clear cursor  (pointer into INBUF)
     stz STATUS    ; status is 'interpret' == \0
     stz ALFLAG                   ; autoload flag OFF
@@ -362,7 +422,6 @@ resolvept:
 
 ;---------------------------------------------------------------------
 okey:
-   ; eventually we want to print 'OK', but...not here.
     
 resolve:           ; get a token
  ; 
@@ -465,7 +524,7 @@ EXESKIP:
 
 ;-----------------------START PROCESSING INPUT-----------------------
 try:
-    lda INBUF, y                   ; index is in y
+    lda (TIB), y                   ; index is in y
     beq getline    ; if \0  - get a line if pointing at 0
     iny
     eor #$20       ; return 0 in  A if a space 
@@ -479,10 +538,13 @@ getline:   ; drop rts of try, fall through to 'token'
     pla
     ldy #0   ; leave the first
 GETLOOP:
-    sta INBUF, y  ; dummy store on first pass, overwritten
+    sta (TIB), y  ; dummy store on first pass, overwritten
     iny
-    cpy #INBUF_end
+    cpy TIBEND
     beq GETLNEND
+    cpy #$FF
+    bne GETREADLOOP
+    ldy #1
 GETREADLOOP:
     jsr READ_CHAR
     bcc GETREADLOOP
@@ -492,7 +554,7 @@ GETREADLOOP:
     bne GETLOOP
     dey
     dey
-    lda INBUF, y      ; make sure prev char not overwritten
+    lda (TIB), y      ; make sure prev char not overwritten
     bra GETLOOP
 GETLNEND:                ; clear all if y eq \0
     lda #$0D
@@ -500,10 +562,15 @@ GETLNEND:                ; clear all if y eq \0
     lda #$0A
     jsr WRITE_CHAR
     lda #$20
-    sta INBUF       ; start with space
-    sta INBUF, y        ; ends with space
+    phy
+    ldy #0
+    sta (TIB), y       ; start with space
+    ply
+    sta (TIB), y        ; ends with space
     lda #0            ; mark eol with 0
-    sta INBUF + 1, y
+    iny
+    sta (TIB), y
+    dey
 ; start it
     sta CURBUF
 
@@ -527,44 +594,56 @@ TOKENSCAN:  ; scan spaces
     sty CURBUF 
 
 TOKENDONE:  ; find size and store it;
-;.ifdef DEBUG 
-;    jsr DUMPREG                        ; DEBUG
-;.endif    
+.ifdef DEBUG 
+    jsr DUMPREG                        ; DEBUG
+.endif    
     tya
     sec
     sbc NXTTOK     
     ldy NXTTOK    ; keep it
     dey
-    sta INBUF, y  ; store size for counted string 
+    sta (TIB), y  ; store size for counted string 
     sty NXTTOK
     ;
-    ;  During interpretive mode at least...do number conversions here, before 
+    ;  During interpretive mode at least...do number and string capture here, before 
     ;     looking at word list; will be pushed on stack.
     ;  This SHOULD have a general digit converter (any base up to 16); return C = 1 if no conversion
     ;   if SINGLE is defined, this will skip single digit numbers and use hardcoded ones.
+    ;
+    ;  Following check for #'s, check for quoted inline txt a la 'q^....^'
     ;
 .ifdef numbers
       ldy #0
       lda (NXTTOK),y
       tax                ; store size in X, pass to conversion 
       jsr DIGCONVT
-      bcs TOKENEND       ; if some error in conversion, skip and process regular way
+      bcs CHKFERTXT       ; if some error in conversion, skip and continue processing
+      bra TOKCLR0
+.endif  ; 'numbers'
+CHKFERTXT:
+      jsr TEXTGET         ; check to see if string entry q^...^ - Y has position of first ^
+      bcs TOKENEND
+      tya                 
+      clc
+      adc TEMP3           ; add the length....
+      adc #3              ; and the xtras
+      tax
+      ldy #0
+      lda #$20
+      bra TOKCLR
 TOKCLR0:
       ldy #0
       lda (NXTTOK),y     ; load length again
       tax
-      inx      
+      inx    
       lda #$20           ; copy spaces over entire converted string
 TOKCLR:
       sta (NXTTOK),y
       iny
       dex
-      bne TOKCLR
-;.ifdef DEBUG    
-;      jsr DUMPREG               ; DEBUG
-;.endif     
+      bne TOKCLR     
       jmp token               ; and use 'token' to rebuild input buffer w/o converted #
-.endif  ; 'new nums' switching 
+
 
 TOKENEND:
 ;.ifdef DEBUG  
@@ -712,6 +791,22 @@ addwx:
     clc ; keep carry clean
 addwx_end:
     rts
+
+SWITCH_TO_ALT:
+    lda #<ALTBUF
+    sta TIB
+    lda #>ALTBUF
+    sta TIB+1
+    lda #<ALTBUF_end
+    sta TIBEND
+    lda #>ALTBUF_end
+    sta TIBEND+1
+    jmp abort
+    
+
+
+    
+    
     
 ENGINEEND:
 ;                           END OF CORE ENGINE
@@ -915,7 +1010,8 @@ COMPHEADER:
 
     jsr token                    ; get next token
 
-    ldy #0                       ; copy it to heap: length, name, and...code fields (later)
+    ldy #0                       ; copy it to heap: length and name
+                                 ; code field comes with later proc
 COMPLOOP:    
     lda (NXTTOK), y
     cmp #$20                

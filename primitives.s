@@ -27,6 +27,32 @@ def_word ".S", "splist", 0       ; changed from %S
     WCRLF_np
     jmp next
 
+; ( -- ) data stack empty?
+def_word "?S", "spp", 0
+    stz TEMP1+1
+    stz TEMP1
+    lda DSPTR
+    cmp #DSEND
+    bne SPPEND
+    lda #$FF
+    sta TEMP1
+SPPEND:
+    jsr spush_0
+    jmp next
+
+; ( -- ) return stack empty?
+def_word "?R", "rtp", 0
+    stz TEMP1+1
+    stz TEMP1
+    lda RTPTR
+    cmp #RTEND
+    bne RTPEND
+    lda #$FF
+    sta TEMP1
+RTPEND:
+    jsr spush_0
+    jmp next   
+    
 ;----------------------------------------------------------------------
 ; ( -- ) ae list of return stack
 def_word ".R", "rplist", 0       ; changed from %R
@@ -43,32 +69,24 @@ def_word ".R", "rplist", 0       ; changed from %R
     jmp next
 
 ;----------------------------------------------------------------------
-;  list a sequence of references
+;  list a sequence of references ( for .S and .R )
 list:
-
     sec                 ; calc diff and length of list
     sbc TEMP1
     lsr
-
     tax                 ; hide in X
-
     lda TEMP1 + 1       ; print addr of pointer
     jsr WRITE_BYTE
     lda TEMP1
     jsr WRITE_BYTE
-
     lda #' '
     jsr WRITE_CHAR
-
     txa
-    jsr WRITE_BYTE         ; print # of entries?
-
+    jsr WRITE_BYTE         ; print # of entries
     lda #' '
     jsr WRITE_CHAR
-
     txa
     beq @ends
-
     ldy #0
 @loop:
     lda #' '
@@ -86,18 +104,15 @@ list:
 @ends:
     rts
     
-;----------------------------------------------------------------------
+;------------------------------- ODUMP AND DUMP ---------------------------------------
 ; ( -- ) dumps the user dictionary
-def_word "dump", "dump", 0
-
+def_word "odump", "odump", 0
     lda #$0
     sta TEMP1
     lda #>ends + 1
     sta TEMP1 + 1
-
     ldx #TEMP1
     ldy #0
-
 @loop:
     lda TEMP1
     cmp NEXTHEAP
@@ -118,7 +133,127 @@ def_word "dump", "dump", 0
     clc  ; clean
     jmp next 
 
-;----------------------------------------------------------------------
+; ( -- ) dump memory
+def_word "dump", "dump", 0
+    jsr spull_1             ; TEMP2 LSB is # of pages
+    jsr spull_0             ; TEMP1 has starting addr 
+    lda TEMP1+1
+    sta TEMP0+1
+    ldx TEMP2
+    bne FDUMPLOOP
+    ldx #1                  ; always print at least one page
+FDUMPLOOP:
+    jsr DUMPPAGE
+    inc TEMP0+1
+FDUMPGET:
+    jsr READ_CHAR           ; wait for char to continue to next page
+    bcc FDUMPGET
+    dex
+    bne FDUMPLOOP
+    clc
+    jmp next
+    
+;------------------------------ WLIST -----------------------------------
+;
+; ( -- ) clean word list, 
+def_word "wlist", "wlist", 0
+
+; load LASTHEAP
+    lda LASTHEAP + 1
+    sta TEMP2 + 1
+    lda LASTHEAP
+    sta TEMP2
+
+; load NEXTHEAP
+    lda NEXTHEAP + 1
+    sta TEMP3 + 1
+    lda NEXTHEAP
+    sta TEMP3
+    
+    stz TEMP5
+    
+WORD_LOOP:
+    inc TEMP5       ; increment 'words per line' count
+    lda TEMP2       ; lsb linked list
+    sta TEMP1
+    ora TEMP2 + 1    ; check if TEMP2 = $0000, end if so
+    beq WORD_END
+    lda TEMP2 + 1    ; msb linked list
+    sta TEMP1 + 1
+    
+    lda TEMP5        ; check word count, CRLF if 4th one
+    cmp #4
+    bne WORD_SKIP
+    WCRLF_np
+    stz TEMP5
+    
+WORD_SKIP:
+; put address
+    lda #' '
+    jsr WRITE_CHAR
+    lda TEMP1 + 1
+    jsr WRITE_BYTE
+    lda TEMP1
+    jsr WRITE_BYTE
+
+    ldx #TEMP1          ; advance TEMP1 to name+flag
+    lda #2
+    jsr addwx
+    ldy #0                
+    jsr show_name        ; put size + flag, name
+    
+    lda #10
+    sec
+    sbc TEMP6
+    tax
+SPCLOOP:
+    lda #' '
+    jsr WRITE_CHAR
+    dex
+    bne SPCLOOP
+    lda #'|'
+    jsr WRITE_CHAR
+    
+    iny                  ; update TEMP1 again, point at CFA
+    tya
+    ldx #TEMP1
+    jsr addwx
+
+; check if is a primitive
+;    lda TEMP1 + 1
+;    cmp #>ends + 1
+;    bmi WORD_CONT
+;
+; list references
+;    ldy #0
+;    jsr show_refer
+     lda TEMP3           ; instead of printing refs, just advance TEMP1 to TEMP3
+     sta TEMP1
+     lda TEMP3+1
+     sta TEMP1+1
+
+WORD_CONT:
+    lda TEMP2            ; update TEMP2 and TEMP3, advance in linked list
+    sta TEMP3
+    lda TEMP2 + 1
+    sta TEMP3 + 1
+    ldy #0
+    lda (TEMP3), y
+    sta TEMP2
+    iny
+    lda (TEMP3), y
+    sta TEMP2 + 1
+    ldx #(TEMP3)
+    lda #2
+    jsr addwx
+
+    jmp WORD_LOOP 
+
+WORD_END:
+    clc  ; clean
+    jmp next
+;
+;-------------------------------------- WORDS ---------------------
 ; ( -- ) words in dictionary, 
 def_word "words", "words", 0
 
@@ -137,7 +272,7 @@ def_word "words", "words", 0
 WORDLOOP1:
     lda TEMP2        ; lsb linked list
     sta TEMP1
-    ora TEMP2 + 1    ; check if $00-00
+    ora TEMP2 + 1    ; check if $0000
     bne WORDSKIP1
     jmp WORDSEND  
 WORDSKIP1:
@@ -148,7 +283,7 @@ WORDSKIP1:
     WCRLF_np
     
 ; print address
-    lda #' '
+    lda #'-'
     jsr WRITE_CHAR
 
     lda TEMP1 + 1
@@ -157,7 +292,7 @@ WORDSKIP1:
     jsr WRITE_BYTE
 
 ; print link
-    lda #' '
+    lda #'-'
     jsr WRITE_CHAR
 
     ldy #1
@@ -226,56 +361,52 @@ WORDSEND:
 ;----------------------------------------------------------------------
 ; print size and name 
 show_name:
-    lda #' '
-    jsr WRITE_CHAR
-
-    lda (TEMP1), y
-    jsr WRITE_BYTE
+     lda #':'
+     jsr WRITE_CHAR
+;    lda (TEMP1), y
+;    jsr WRITE_BYTE       ; size
     
     lda #' '
     jsr WRITE_CHAR
-
     lda (TEMP1), y
-    and #$7F
+    and #$3F           ; mask off top two bits
     tax
-
-SHWNAMELOOP1:
+    sta TEMP6          ; save length of name
+    
+NAMELOOP:              ; name
     iny
     lda (TEMP1), y
     jsr WRITE_CHAR
     dex
-    bne SHWNAMELOOP1
+    bne NAMELOOP
+    lda #' '
+    jsr WRITE_CHAR
     rts
 
 ;----------------------------------------------------------------------
 show_refer:
-; print references PFA ... 
+; print references (PFA - parameter field addresses) 
     ldx #(TEMP1)
 
 SHWREFLOOP:
     lda #' '
     jsr WRITE_CHAR
-
     lda TEMP1 + 1
     jsr WRITE_BYTE
     lda TEMP1
     jsr WRITE_BYTE
-
     lda #':'
     jsr WRITE_CHAR
-    
     iny 
     lda (TEMP1), y
     jsr WRITE_BYTE
     dey
     lda (TEMP1), y
     jsr WRITE_BYTE
-
     lda #2
     jsr addwx
 
-; check if ends
-
+; check if at the end
     lda TEMP1
     cmp TEMP3
     bne SHWREFLOOP
@@ -285,32 +416,10 @@ SHWREFLOOP:
     rts
 
 ;----------------------------------------------------------------------
-;  ae seek for 'exit to ends a sequence of references
+;  seek for addr of 'exit' at end of sequence of references
 ;  max of 254 references in list
 ;
-seek:
-    ldy #0
-@loop1:
-    iny
-    beq @ends
-
-    lda (TEMP1), y
-    cmp #>exit
-    bne @loop1
-
-    dey 
-    lda (TEMP1), y
-    cmp #<exit
-    beq @ends
-    
-    iny
-    bne @loop1
-
-@ends:
-    tya
-    lsr
-    clc  ; clean
-    rts
+;  removed 'seek', was not used in original code
 
 ;----------------------------------------------------------------------
 ; ( u -- u ) print top of DS in hexadecimal in MSB:LSB form
@@ -333,6 +442,22 @@ def_word ".C", "cdot", 0
     jsr WRITE_CHAR
     jmp this       ; 'this' includes jsr spush_0 and next
 
+; (u u ... -- ) print zero term'd, packed string or all of stack as ascii
+def_word ".sz", "szdot",0
+SZLOOP:
+    lda DSPTR
+    cmp #DSEND
+    beq SZEND
+    jsr spull_0
+    lda TEMP1 + 1
+    beq SZEND
+    jsr WRITE_CHAR
+    lda TEMP1
+    beq SZEND
+    jsr WRITE_CHAR    
+    bra SZLOOP
+SZEND:
+    jmp next
 ;---------------------------------------------------------------------
 ;
 ; extensions
@@ -371,7 +496,84 @@ SLLOOP:
 SLZERO:
     jmp next
 
+;--------------- bit test/set/clear ----------------------------------
+; ( n b -- t? )
+def_word "tbit", "tbit", 0            ; nondestructive test bit
+    jsr spull_1     ; which bit
+    lda TEMP2
+    and #$0F        ; only want 0-16
+    sta TEMP2
+    jsr spull_0
+    jsr spush_0     ; backup!
+    jsr BITWIND
+    lda TEMP1
+    and #$01
+    beq TBCLR      ; test bit 0
+    lda #$FF
+    sta TEMP1
+    sta TEMP1+1
+    bra TBITEND
+TBCLR:
+    stz TEMP1
+    stz TEMP1+1
+TBITEND:
+    jmp this
 
+; ( n b -- ns )    
+def_word "sbit", "sbit", 0             ; set bit
+    jsr spull_1     ; which bit
+    lda TEMP2
+    and #$0F        ; only want 0-16
+    sta TEMP2
+    jsr spull_0
+    jsr BITWIND
+    lda TEMP1
+    ora #$01        ; set bit 0
+    sta TEMP1
+    jsr BITUNWIND
+    jmp this
+    
+; ( n b -- nc )    
+def_word "cbit", "cbit", 0
+    jsr spull_1     ; which bit
+    lda TEMP2
+    and #$0F        ; only want 0-16
+    sta TEMP2
+    jsr spull_0     
+    jsr BITWIND
+    lda TEMP1
+    and #$FE       ; clear bit 0
+    sta TEMP1
+    jsr BITUNWIND
+    jmp this
+
+BITWIND:
+    stz TEMP3
+    stz TEMP3+1
+    ldx TEMP2
+    beq BITWSKIP
+BITWLOOP:
+    lsr TEMP1+1
+    ror TEMP1
+    ror TEMP3+1
+    ror TEMP3
+    dex
+    bne BITWLOOP
+BITWSKIP:
+    rts
+    
+BITUNWIND:
+    ldx TEMP2
+    beq BITUWSKIP
+BITUNWLOOP:
+    asl TEMP3
+    rol TEMP3+1
+    rol TEMP1
+    rol TEMP1+1
+    dex
+    bne BITUNWLOOP
+BITUWSKIP:
+    rts
 ;---------------------------------------------------------------------
 ; start of dictionary
 ;---------------------------------------------------------------------
@@ -457,7 +659,7 @@ def_word "s@", "state", 0
     lda #>STATUS
     jmp keeps   ; pushes addr of status word on stack?  keeps includes sta TEMP+1 etc.
 
-
+.ifdef DEBUG
 ;------------------------ADDED for HyForth debugging-------
 ; ( -- ) toggle debug
 def_word "debug", "debug", 0
@@ -471,6 +673,7 @@ def_word "debug", "debug", 0
 @store:
      sta DFLAG   
      jmp next
+.endif
 ;
 ;------------------------END of primitives.s
 ;
