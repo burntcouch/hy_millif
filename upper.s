@@ -441,7 +441,7 @@ GETDIG_ERR:          ; pass carry set for no digit
 ;
 HYWELCOME:
     .byte CR, LF
-    .byte "HyForth 0.73 03-31-2026"
+    .byte "HyForth 0.80 04-18-2026"
     .byte CR, LF, $00
 CLEAR:
     lda #1
