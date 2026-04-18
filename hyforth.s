@@ -582,15 +582,21 @@ try:
 
 ;--------------------GET AN INPUT LINE ENDING WITH CR/LF ------------
 getline:   ; drop rts of try, fall through to 'token'
+    pla
+    pla
 ;
-;   do autoload here
+;   DO AUTOLOAD HERE
 ;      load a space, then copy next line to buffer
 ;      calc y (length + 1) jump to GETLNEND
 ;
+    lda ALFLAG
+    beq GLNORMAL
+    jsr ALOADTIB
+    jmp GETLNSKIPCRLF
+
+GLNORMAL:
     WSEQ_raw HYPROMPT    ; print prompt
 ;
-    pla
-    pla
     ldy #0   ; leave the first
 GETLOOP:
     sta (TIB), y  ; dummy store on first pass, overwritten
@@ -616,6 +622,7 @@ GETLNEND:                ; clear all if y eq \0
     jsr WRITE_CHAR
     lda #$0A
     jsr WRITE_CHAR
+GETLNSKIPCRLF:          ; SKIP to here if don't want CRLF
     lda #$20
     phy
     ldy #0
@@ -624,11 +631,14 @@ GETLNEND:                ; clear all if y eq \0
     sta (TIB), y        ; ends with space
     lda #0            ; mark eol with 0
     iny
-    sta (TIB), y
+    sta (TIB), y  
     dey
 ; start it
     sta CURBUF
-
+.ifdef DEBUG  
+    jsr DUMPREG
+.endif
+    
 ;---------------------------------------------------------------------
 ; in place every token,
 ; the counter is placed at last space before word

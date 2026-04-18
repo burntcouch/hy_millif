@@ -6,9 +6,9 @@ ftrain_0:
 .byte 0
 .byte ": ?branch nb not rp @ @ @ 2 - and rp @ @ + 2 + rp @ ! ;  : branch rp @ @ dup @ + rp @ ! ;"
 .byte 0
-.byte ": if lit ?branch , here @ 0 , ; I "
+.byte ": if lit ?branch , here @ 0 , ; I"
 .byte 0
-.byte ": then dup here @ swap - swap ! ; I "
+.byte ": then dup here @ swap - swap ! ; I"
 .byte 0
 .byte ": else lit branch , here @ 0 , swap dup here @ swap - swap ! ; I"
 .byte 0
@@ -47,10 +47,5 @@ ftrain_0:
 .byte " parse type ; I"
 .byte 0
 .byte ": ( [char] ) parse drop drop ; I"
-.byte 0
-.byte '.',$22
-.byte " DONE!"
-.byte $22, 0
-.byte "reset"
-.byte 0                      ; to mark end?           
+.byte 0, 0                               ; to mark end?           
 ftrain_end0:

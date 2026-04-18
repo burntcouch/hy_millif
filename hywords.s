@@ -100,16 +100,16 @@ FskipEnd:
      jmp next
 ;
 ;
-def_word "bbra", "bbra", 0        ; [IP] = IP  next
-     jmp Fbranch
+;def_word "bbra", "bbra", 0        ; [IP] = IP  next
+;     jmp Fbranch
 ;
-def_word "?bra", "qbra", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
-     jsr spull_0                      ;  above may be backwards, logically?
-     lda TEMP1
-     ora TEMP1+1
-     beq Fskip                       
-     jmp Fbranch
-
+;def_word "?bra", "qbra", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
+;     jsr spull_0                      ;  above may be backwards, logically?
+;     lda TEMP1
+;     ora TEMP1+1
+;     beq Fskip                       
+;     jmp Fbranch
+;
 ;         Get next byte off INBUF, advance CURBUF
 def_word "in>", "intib", 0
    stz TEMP1+1
@@ -637,85 +637,47 @@ CLOADMSG:
 ;
 ; ( -- )     autoload a list of scripts
 def_word "autoload", "autoload", 0
-    jsr spull_1   ; get end of list
-    lda TEMP2
-    sta TEMP4
-    lda TEMP2+1
-    sta TEMP4+1
+    jsr spull_0   ; get end of list
+    lda TEMP1
+    sta TEMP7
+    lda TEMP1+1
+    sta TEMP7+1
     lda #1
     sta ALFLAG
-    jmp CLOAD_IN
+    jmp next
     
-APPENDCLOAD:
-    lda TEMP1+1
-    cmp TEMP4+1
-    bcc APCLCOPY
-    lda TEMP1
-    cmp TEMP4
-    beq APCLSK0
-    bcc APCLCOPY
-APCLSK0:
-    stz ALFLAG
-    bra APCLEXIT
-APCLCOPY:
+ALOADTIB:
+    ldy #0
     lda #$20
     sta (TIB),y
+ALOADLOOP:
+    lda (TEMP7),y
+    beq ALOADSKIP
     iny
-    lda #'$'
     sta (TIB),y
-    ldx #2
+    bra ALOADLOOP
+ALOADSKIP:
+    jsr ALOADCHKDONE
     iny
-APCLCONT:
-    lda TEMP1+1
-    and #$F0
-    lsr
-    lsr
-    lsr
-    lsr
+    rts                  ; y points at trailing space
+
+ALOADCHKDONE:
+    iny
+    lda (TEMP7),y
+    bne ALNOTSKIP        ; calc next address if not done
+    stz ALFLAG           ; turn off autoload
+    bra ALNOTDONE
+ALNOTSKIP:
+    tya
     clc
-    adc #$30
-    cmp #$3A
-    bcc APCLS0
-    adc #6
-APCLS0:
-    sta (TIB),y
-    iny
-    lda TEMP1+1
-    and #$0F
-    clc
-    adc #$30
-    cmp #$3A
-    bcc APCLS1
-    adc #6
-APCLS1:
-    sta (TIB),y
-    iny
-    lda TEMP1
-    sta TEMP1+1
-    dex
-    bne APCLCONT
-    lda #$20
-    sta (TIB),y
-    iny               ; and then do 'cload '
-    lda #'c'
-    sta (TIB),y
-    iny
-    lda #'l'
-    sta (TIB),y
-    iny
-    lda #'o'
-    sta (TIB),y
-    iny
-    lda #'a'
-    sta (TIB),y
-    iny
-    lda #'d'
-    sta (TIB),y
-    iny
-    lda #$20
-    sta (TIB),y
-APCLEXIT:
+    adc TEMP7
+    sta TEMP7
+    bcc ALNOTDONE
+    inc TEMP7+1
+ALNOTDONE:
+    dey
     rts
+    
 
 ; (a -- )       load a compile-able script from memory, zero term'd
 def_word "cload", "cload", 0
@@ -757,16 +719,10 @@ CLOAD_CONT:
     clc
     adc TEMP1
     sta TEMP1
-    bcc ALFCHECK
+    bcc CLSKIP
     inc TEMP1+1
-ALFCHECK:
-    lda ALFLAG         ; handling of 'autoload' here
-    beq UPDTEMPSKIP
-    jsr APPENDCLOAD
-    bra UPDAUTOSKIP
-UPDTEMPSKIP:
+CLSKIP:
     jsr spush_0        ; push next addr on stack if wanted
-UPDAUTOSKIP:
 .ifdef DEBUG
     jsr DUMPREG
 .endif
