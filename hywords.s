@@ -19,7 +19,7 @@ def_word "cr", "crlf", 0
      jmp next
 ;    
 def_word ">in", "inptr", 0                  ; CURBUF - pointer into INBUF (TIB)
-    lda #STATUS + 2
+    lda #CURBUF
 REGIN:
     sta TEMP1
     lda #0
@@ -27,19 +27,19 @@ REGIN:
     jmp this
 ;    
 def_word "last", "last", 0                   ; LASTHEAP addr onto stack
-    lda #STATUS + 4
+    lda #LASTHEAP
     bra REGIN
 ;    
 def_word "here", "here", 0                   ; NEXTHEAP addr onto stack
-    lda #STATUS + 6
+    lda #NEXTHEAP
     bra REGIN
 ;
 def_word "sp", "sp", 0                       ; DSPTR pointer addr onto stack
-    lda #STATUS + 8
+    lda #DSPTR
     bra REGIN
 ;
 def_word "rp", "rp", 0                       ; RTPTR pointer addr onto stack
-    lda #STATUS + 10
+    lda #RTPTR
     bra REGIN
 ;
 
@@ -601,11 +601,11 @@ def_word "tuck", "tuck", 0
 def_word "2dup", "dup2", 0
    jsr spull_1          ; pull top to TEMP2
    jsr spull_0          ; then TEMP1
-   jsr spush_0          ; and then push back
+   jsr spush_0          ; and then push them back
    jsr spush_1
    jsr spush_0
    jsr spush_1         
-   jmp next             ; includes jsr spush_0 for second time
+   jmp next            
 ;
 ; (a b -- )
 def_word "2drop", "drop2", 0
@@ -632,46 +632,144 @@ def_word "2over", "over2", 0
 CLOADMSG:
    .byte "load>"
    .byte 0
+;
+;-------------------------AUTOLOAD and CLOAD----------------------
+;
+; ( -- )     autoload a list of scripts
+def_word "autoload", "autoload", 0
+    jsr spull_1   ; get end of list
+    lda TEMP2
+    sta TEMP4
+    lda TEMP2+1
+    sta TEMP4+1
+    lda #1
+    sta ALFLAG
+    jmp CLOAD_IN
+    
+APPENDCLOAD:
+    lda TEMP1+1
+    cmp TEMP4+1
+    bcc APCLCOPY
+    lda TEMP1
+    cmp TEMP4
+    beq APCLSK0
+    bcc APCLCOPY
+APCLSK0:
+    stz ALFLAG
+    bra APCLEXIT
+APCLCOPY:
+    lda #$20
+    sta (TIB),y
+    iny
+    lda #'$'
+    sta (TIB),y
+    ldx #2
+    iny
+APCLCONT:
+    lda TEMP1+1
+    and #$F0
+    lsr
+    lsr
+    lsr
+    lsr
+    clc
+    adc #$30
+    cmp #$3A
+    bcc APCLS0
+    adc #6
+APCLS0:
+    sta (TIB),y
+    iny
+    lda TEMP1+1
+    and #$0F
+    clc
+    adc #$30
+    cmp #$3A
+    bcc APCLS1
+    adc #6
+APCLS1:
+    sta (TIB),y
+    iny
+    lda TEMP1
+    sta TEMP1+1
+    dex
+    bne APCLCONT
+    lda #$20
+    sta (TIB),y
+    iny               ; and then do 'cload '
+    lda #'c'
+    sta (TIB),y
+    iny
+    lda #'l'
+    sta (TIB),y
+    iny
+    lda #'o'
+    sta (TIB),y
+    iny
+    lda #'a'
+    sta (TIB),y
+    iny
+    lda #'d'
+    sta (TIB),y
+    iny
+    lda #$20
+    sta (TIB),y
+APCLEXIT:
+    rts
+
 ; (a -- )       load a compile-able script from memory, zero term'd
 def_word "cload", "cload", 0
-    stz ALFLAG         ; clear autoload flag
+    ;stz ALFLAG         ; clear autoload flag
 CLOAD_IN:
     WSEQ_raw CLOADMSG
     jsr spull_0  ; address from stack to TEMP1
     ldy #0
     lda #$20
-    sta INBUF, y   ; put space at start
+    sta (TIB), y   ; put space at start
 CLOAD_LP:   
     lda (TEMP1), y
     beq CLOAD_CONT     ; stops at first 0
     jsr WRITE_CHAR     ; echo char out so can see what's being pulled in
     iny           ; yep, skip
-    sta INBUF, y
+    sta (TIB), y
     bra CLOAD_LP
 CLOAD_CONT:
     iny
     lda #$20
-    sta INBUF,y     ; not sure but won't hurt to add a space
+    sta (TIB),y     ; not sure but won't hurt to add a space
     lda #$0D
     jsr WRITE_CHAR
     lda #$0A
     jsr WRITE_CHAR
     lda #$20
-    sta INBUF       ; start with space
-    sta INBUF, y        ; ends with space
+    phy
+    ldy #0
+    sta (TIB), y       ; start with space
+    ply
+    sta (TIB), y        ; ends with space
     lda #0            ; mark eol with 0
-    sta INBUF + 1, y
+    iny
+    sta (TIB), y
+    dey
 ; start it
     sta CURBUF
     tya                ; calc next address if want to load more
     clc
     adc TEMP1
     sta TEMP1
-    bcc UPDTEMPSKIP
+    bcc ALFCHECK
     inc TEMP1+1
-                    ; handling of 'autoload' was here
+ALFCHECK:
+    lda ALFLAG         ; handling of 'autoload' here
+    beq UPDTEMPSKIP
+    jsr APPENDCLOAD
+    bra UPDAUTOSKIP
 UPDTEMPSKIP:
     jsr spush_0        ; push next addr on stack if wanted
+UPDAUTOSKIP:
+.ifdef DEBUG
+    jsr DUMPREG
+.endif
     jsr token            ; massage the buffer, oh yeah
     jmp RESFIND           ; works perfectly!
 ;
@@ -896,7 +994,42 @@ MEMCPYDOIT:
     stz supprint
 MEMCPYEND:
     jmp next
-    
+
+; (daddr n -- ) start disassembly from daddr, do it
+; $F600 is entry point --A+Y for starting address, C=1 for multiple opcodes, X for # of codes
+def_word "disasm", "disasm", 0
+    jsr spull_1    ; # of instructions (??)
+    jsr spull_0    ; addr
+    ldx TEMP2
+    cpx #$FE
+    bcs DISEND
+    lda #1           ; and ZP_D_STATE has to be =1 in order to show mnemonics etc
+    sta ZP_D_STATE
+    lda TEMP1
+    ldy TEMP1+1
+    sec              ; set the carry to make sure multiple ops returned
+    jsr DISASM_AY
+    lda ZP_XAM
+    sta TEMP1
+    ldy ZP_XAM+1
+    sty TEMP1+1
+    jsr spush_0     ; push last address on stack?
+DISEND:
+    jmp next
+
+; (0y 0a jsaddr -- 0x) jump to external code with parms passed via A,Y, result in X
+def_word "syscall", "syscall", 0
+    jsr spull_0    ; addr
+    jsr spull_1    ; parm to pass to a
+    jsr spull_2    ; parm to pass to y
+    lda TEMP1
+    sta SYSCALL+1
+    lda TEMP1+1
+    sta SYSCALL+2
+    ldy TEMP3
+    lda TEMP2
+    jmp SYSCALL
+    jmp next
 ;----------------------------------------------------------------------------
 HYWORDS_END:
 ;  end hywords.s

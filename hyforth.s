@@ -167,6 +167,33 @@ werrend:
     WCRLF_np
     rts
 .endmacro
+;
+;    left / right shift shortcuts
+;
+.macro SL_N     n
+    .if     n > 0
+                asl
+                SL_N    n-1
+    .endif
+.endmacro
+
+.macro SR_N     n
+    .if     n > 0
+                lsr
+                SR_N    n-1
+    .endif
+.endmacro
+;
+;  HString stuff
+;
+.macro HString Str
+    .byte       .strlen(Str), Str
+.endmacro
+
+.macro NamedHString Name, Str
+Name:
+    HString Str
+.endmacro
 ;---------------------------------------------------------------------
 ; variables for macros
 
@@ -230,10 +257,17 @@ RTEND = $FE
 ; reserved for scribbles
 SCRIBB = RTEND
 
+;----------------------   BIOS calls -----------------------------------
 WRITE_CHAR = $F803
-READ_CHAR = $F800
+READ_CHAR = $F800     ; returns C=1, then char in A if char is there
+;WRITE_BYTE = $F806    ; new thunk
 WRITE_BYTE = $F8A3
+
 WOZMON = $FE00
+;DISASM_AY = $F80C    ; A+Y for starting address, C=1 for multiple opcodes, X for # of codes
+ZP_XAM = $31       ; can we see address left by DISASM here?
+;ZP_D_STATE = $2B
+
 INROM = $A000
 ALTBUF = $6000
 ALTBUF_end = $77FF
@@ -260,65 +294,75 @@ ALTBUF_end = $77FF
 ;                   ZERO PAGE USAGE
 ;----------------------------------------------------------------------
 .segment "ZP"
-.org $D2
+.org $D0
 ZPSTART:
 ;
 ;                   HyForth setup stuff
 ;
+TEMP8:
+   .res 2                      ;                 $D0
 TIB:
-   .res 2          ; pointer to input buffer
+   .res 2          ; pointer to input buffer     $D2
 TIBEND:
-   .res 2          ; pointer to end of TIB
+   .res 2          ; pointer to end of TIB       $D4
 DFLAG:
-   .res 1          ; debug flag
+   .res 1          ; debug flag                  $D6
 ERRFLAG:
-   .res 1          ; error type, 0 = none
+   .res 1          ; error type, 0 = none        $D7
 ERRPTR:
-   .res 2          ; ptr to mitigation/message
+   .res 2          ; ptr to mitigation/message   $D8
 DIGBASE:
-   .res 1          ; base for number conversion
+   .res 1          ; base for number conversion  $DA
 RSEED:        
-   .res 4          ; random # seed
-ALFLAG:            ; autoload flag
+   .res 4          ; random # seed   $DB
+ALFLAG:            ; autoload flag   $DF
    .res 1          ; spare space
 ;
 ;
 nil:               ; at $E0 now
-; internal Forth 
-
+;
+;          internal Forth 
+;
 STATUS:     .word $0   ; state at lsb, last size+flag at msb
 CURBUF:     .word $0   ; CURBUF next free byte in TIB
 LASTHEAP:   .word $0   ; last link cell
 NEXTHEAP:   .word $0   ; next free cell in heap dictionary
-
-; pointer registers
-
+;
+;         pointer registers
+;
 DSPTR:      .word $0   ; data stack pointer
 RTPTR:      .word $0   ; return stack pointer
 INSTPTR:    .word $0   ; instruction pointer
 WORKREG:    .word $0   ; working register
-
-; free for use
-
+;
+;        free for use
+;
 mainoff:                            ; use for COPYTORAM, MEMCPY
-TEMP1:    .word $0 ; first
+TEMP1:    .word $0     ; first
 endsoff:
-TEMP2:    .word $0 ; second
+TEMP2:    .word $0     ; second
 ramstart:
-TEMP3:    .word $0 ; third   
+ZP_D_ICOUNT:                         ; DISASM
+TEMP3:    .byte 0      ; third  (two bytes)
+ZP_D_EXBYTES:                        ; DISASM
+          .byte 0 
+ZP_D_STATE:                          ; DISASM
 TEMP0:
-TEMP4:    .word $0 ; fourth 
-
-; used, reserved
-
+TEMP4:    .byte 0      ; fourth  (two bytes)
+ZP_D_MODE:                           ; DISASM
+          .byte 0 
+;
+;          used, reserved
+;
 NXTTOK:     .word $0   ; next token in tib (INBUF)
 BACKHEAP:   .word $0   ; hold 'here while compile
-supprint:             ; suppress printing in MEMCPY
-TEMP5:   .res 1     ; byte temp
-TEMP6:   .res 1     ; byte temp
-TEMP7:  .res 2   ; word temp
+supprint:              ; suppress printing in MEMCPY
+TEMP5:   .res 1        ; byte temp
+ZP_D_INST:                           ; DISASM, three bytes
+TEMP6:   .res 1        ; byte temp
+TEMP7:   .res 2        ; word temp
 ;
-;  $FC - $FF in reserve
+; *** $C8-$FF total usage in ZP, including TEMP vars ***
 ;
 ;   HYDRA-16 serial/read buffers at $200 and $300 so skip those
 ;
@@ -347,12 +391,24 @@ RT:                          ; return stack (R)
 main:
     jmp cold
     jmp COPYTORAM
+    jmp DISASM         ; assumes address in $31/$32  (ZP_XAM)
 
 HYPROMPT:
     .byte $0D, $0A
     .byte "HF>"
     .byte 0
- 
+SYSCALL:
+    jsr SCDUMMY        ; store into SCDUMMY+1, +2 to customize jump
+    txa                ; returned stuff in X
+    beq SCSKIP         ; if returns zero, don't do anything else
+    sta TEMP1          ; otherwise...
+    stz TEMP1+1
+    jsr spush_0        ; push result onto stack
+SCSKIP:    
+    jmp errrtn
+SCDUMMY:
+    ldx #0
+    rts
 cold:
     cld
     jsr CLEAR          ; zero out zero page, INBUF, DS, and RT
@@ -390,30 +446,27 @@ reset:
     sty RTPTR + 1 
     
     lda #1                       ; DEBUG OFF by default
-    sta DFLAG
-    
+    sta DFLAG 
+    stz ALFLAG
     
 abort:                            ; clear DS
     ldy #<DSEND
     sty DSPTR
 
-errrtn:                          ; try this instead - RT seems to
-                                 ;  get trashed sometimes on 'unknown word'
+errrtn:                          ; return from error
 quit:                             ; clear RT
     ldy #<RTEND
     sty RTPTR
 
-;errrtn:                          ; DS/RT pointers left alone
     jsr wrterror                 ; print any error messages   
     ldy #0          ; reset INBUF
     lda #0
     sta (TIB),y     ; clear INBUF stuff
     stz CURBUF    ; clear cursor  (pointer into INBUF)
     stz STATUS    ; status is 'interpret' == \0
-    stz ALFLAG                   ; autoload flag OFF
+    ;stz ALFLAG                  ; autoload flag OFF
     
     .byte $2c       ; mask next two bytes, nice trick !
-
 ;---------------------------------------------------------------------
 ; the outer loop
 
@@ -424,9 +477,6 @@ resolvept:
 okey:
     
 resolve:           ; get a token
- ; 
- ; handling of 'autoload' was here
- ;
     jsr token      ; then just process the regular way
 .ifdef DEBUG    
     lda DFLAG                 ; DEBUG
@@ -460,9 +510,9 @@ RESEACH:                        ; msb linked list
     lda TEMP2 + 1
     sta WORKREG + 1           ; update next link 
     
-    ldx #WORKREG       
+    ldx #WORKREG           
     ldy #TEMP2      
-    jsr copyfrom
+    jsr copyfrom                  ; W += 2  (odd way to do it since don't use TEMP2 again?)
     ldy #0              ; compare words
     lda (WORKREG), y    ; save the flag, first byte is (size and flag) 
     sta STATUS + 1
@@ -520,7 +570,7 @@ EXESKIP:
     sta INSTPTR + 1     ; or return to interpreter.
     lda #<resolvept
     sta INSTPTR
-    jmp pick             ; let's doc this....
+    jmp pick             ; almost done, 'next' and either ENTER or EXEC
 
 ;-----------------------START PROCESSING INPUT-----------------------
 try:
@@ -532,6 +582,11 @@ try:
 
 ;--------------------GET AN INPUT LINE ENDING WITH CR/LF ------------
 getline:   ; drop rts of try, fall through to 'token'
+;
+;   do autoload here
+;      load a space, then copy next line to buffer
+;      calc y (length + 1) jump to GETLNEND
+;
     WSEQ_raw HYPROMPT    ; print prompt
 ;
     pla
@@ -594,9 +649,9 @@ TOKENSCAN:  ; scan spaces
     sty CURBUF 
 
 TOKENDONE:  ; find size and store it;
-.ifdef DEBUG 
-    jsr DUMPREG                        ; DEBUG
-.endif    
+;.ifdef DEBUG 
+;    jsr DUMPREG                        ; DEBUG
+;.endif    
     tya
     sec
     sbc NXTTOK     
@@ -1059,7 +1114,7 @@ pick:                     ;                COMPILED OR PRIMITIVE?
 
 nest:                     ; ENTER in classic Forth lingo   ( COMPILED )
     ldy #INSTPTR
-    jsr rpush                   ; [RTPTR] = [IP], RTPTR -=2 
+    jsr rpush                   ; RTPTR -=2, [RTPTR] = [IP] 
     lda WORKREG                 ; W = IP
     sta INSTPTR
     lda WORKREG + 1
