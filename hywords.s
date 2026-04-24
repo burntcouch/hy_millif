@@ -861,8 +861,11 @@ def_word "2over", "over2", 0
    jmp next
 ;
 CLOADMSG:
-   .byte "load>"
+   .byte "cload>"
    .byte 0
+BLOADMSG:
+   .byte "bload:"
+   .byte $0D, $0A, 0
 ;
 ;-------------------------AUTOLOAD and CLOAD----------------------
 ;
@@ -959,6 +962,76 @@ CLSKIP:
 .endif
     jsr token            ; massage the buffer, oh yeah
     jmp RESFIND           ; works perfectly!
+;
+;
+;  BLOAD  -- see example in 'bload.s'
+;
+;   note, only loads ONE word at the moment
+;
+; (a -- )       load native code from memory, zero term'd
+def_word "bload", "bload", 0
+BLOAD_IN:
+    WSEQ_raw BLOADMSG    
+    jsr spull_0          ; address from stack to TEMP1
+
+BLAGAIN:    
+    lda NEXTHEAP
+    sta BACKHEAP                ; backup NEXTHEAP to BACKHEAP
+    lda NEXTHEAP + 1
+    sta BACKHEAP + 1 
+
+BLHEAD:
+    ldy #LASTHEAP
+    jsr comma                    ; change NEXTHEAP to point to LASTHEAP  ('here' <= 'last')
+    ldy #0                       ; copy it to heap: length and name
+                                 ; code field comes with later proc
+                                 ;
+                                 ; NOTE:  This cannot pull more than 255 bytes including
+                                 ;  leading or trailing zeros!
+                                 ;
+BLZEROSKIP:
+    lda (TEMP1), y
+    bne BLNSK1                  ; skip any LEADING zeros
+    iny
+    bra BLZEROSKIP
+BLNSK1:
+    ldy #0                                 
+BLNLOOP:    
+    lda (TEMP1), y               
+    bne BLCOPY
+    iny
+    lda (TEMP1), y
+    beq BLSKIP0
+    dey
+    lda #0
+    bra BLCOPY
+BLSKIP0:    
+    dey
+    dey
+    bra BLEND
+BLCOPY:
+    sta (NEXTHEAP), y
+    iny
+    bne BLNLOOP
+BLEND:
+    iny
+    tya                          ; and update NEXTHEAP  :  'here' incremented by length
+    ldx #NEXTHEAP
+    jsr addwx
+    iny
+    iny
+    tya
+    ldx #TEMP1
+    jsr addwx    
+BLFINISH:    
+    lda BACKHEAP 
+    sta LASTHEAP                ; bring back BACKHEAP to LASTHEAP
+    lda BACKHEAP + 1 
+    sta LASTHEAP + 1
+    jsr spush_0                 ; push next address?
+BLENDEND:
+    jmp next
+
 ;
 ;
 ;
