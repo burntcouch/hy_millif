@@ -80,16 +80,15 @@ def_word "r>", "r_to_s", 0
 Fbranch:                          ; [IP] = IP
      ldy #0
      lda (INSTPTR), y
-     sta TEMP4
+     sta TEMP5
      iny
      lda (INSTPTR), y
-     sta TEMP4+1
      sta INSTPTR+1
-     lda TEMP4
+     lda TEMP5
      sta INSTPTR
      jmp next
 ;     
-Fskip:
+Fskip:                          ; USED by 'lit' and '?bra'
      lda INSTPTR                   ; 'skip' (IP += 2)
      clc
      adc #2
@@ -167,7 +166,227 @@ def_word "lit", "literal", 0
      jsr spush_0
      jmp Fskip
 ;
-; 
+;         HF version of 'variable'
+;
+def_word "var", "var", 0
+
+    lda NEXTHEAP
+    sta BACKHEAP                ; backup NEXTHEAP to BACKHEAP
+    lda NEXTHEAP + 1
+    sta BACKHEAP + 1 
+
+VCHEAD:
+; copy LASTHEAP into (NEXTHEAP)
+    ldy #LASTHEAP
+    jsr comma                    ; change NEXTHEAP to point to LASTHEAP  ('here' <= 'last')
+    jsr token                    ; get first token, the name of new word
+    ldy #0                       ; copy it to heap: length and name
+                                 ; code field comes with later proc
+VCLOOP:    
+    lda (NXTTOK), y
+    cmp #$20                
+    beq VCMID
+VCCOPY:
+    sta (NEXTHEAP), y
+    iny
+    bne VCLOOP
+VCMID:
+    tya                          ; and update NEXTHEAP  :  'here' incremented by length
+    ldx #(NEXTHEAP)
+    jsr addwx                   ; 'here' now at CFA
+    ldy #0
+    lda #$24                    ; 'bit $00'
+    sta (NEXTHEAP),y
+    lda #0
+    iny
+    sta (NEXTHEAP),y
+    lda #$A9                    ; 'lda #<NEXTHEAP+13
+    iny
+    sta (NEXTHEAP),y
+    lda NEXTHEAP+1
+    sta TEMP1+1  
+    lda NEXTHEAP
+    clc
+    adc #15
+    sta TEMP1                  ; #<NEXTHEAP+13
+    bcc VCMID0
+    inc TEMP1+1                ; #>NEXTHEAP+13
+VCMID0:
+    lda TEMP1
+    iny
+    sta (NEXTHEAP),y
+    lda #$85                    ; 'sta zp'
+    iny
+    sta (NEXTHEAP),y
+    lda #TEMP1
+    iny
+    sta (NEXTHEAP),y
+    lda #$A9                    ; 'lda #>NEXTHEAP+13
+    iny
+    sta (NEXTHEAP),y
+    lda TEMP1+1
+    iny
+    sta (NEXTHEAP),y    
+    lda #$85                    ; 'sta zp'
+    iny
+    sta (NEXTHEAP),y
+    lda #TEMP1+1
+    iny
+    sta (NEXTHEAP),y
+    lda #$20                    ; 'jsr absolute'
+    iny
+    sta (NEXTHEAP),y
+    lda #<spush_0
+    iny
+    sta (NEXTHEAP),y
+    lda #>spush_0
+    iny
+    sta (NEXTHEAP),y
+    lda #$80                     ; 'bra 2'
+    iny
+    sta (NEXTHEAP),y
+    lda #2
+    iny
+    sta (NEXTHEAP),y 
+    lda #0
+    iny
+    sta (NEXTHEAP),y            ; set at zero
+    iny
+    sta (NEXTHEAP),y
+    lda #$4C                    ; 'jmp next'
+    iny
+    sta (NEXTHEAP),y
+    lda #<next
+    iny
+    sta (NEXTHEAP),y
+    lda #>next
+    iny
+    sta (NEXTHEAP),y
+    iny                        ; to update
+    tya                        ; update NEXTHEAP
+    ldx #NEXTHEAP
+    jsr addwx
+VCFINISH:    
+    lda BACKHEAP 
+    sta LASTHEAP                ; bring back BACKHEAP to LASTHEAP
+    lda BACKHEAP + 1 
+    sta LASTHEAP + 1
+                                
+    jmp next
+    
+VCCODE:
+   bit $00
+   lda #<VCDATA               ; <NEXTHEAP+13   (offset +3) 
+   sta TEMP1
+   lda #>VCDATA               ; >NEXTHEAP+13   (offset +7)
+   sta TEMP1+1
+   jsr spush_0
+   bra VCEND                  ; bra 2
+VCDATA:
+   .word 0 
+VCEND:   
+   jmp next
+VCEND0:
+;
+;  HF version of 'constant'
+;
+def_word "cons", "cons", 0
+    lda NEXTHEAP
+    sta BACKHEAP                ; backup NEXTHEAP to BACKHEAP
+    lda NEXTHEAP + 1
+    sta BACKHEAP + 1
+    ldy #TEMP8
+    jsr spull
+
+    jsr DUMPREG
+    
+CCHEAD:
+; copy LASTHEAP into (NEXTHEAP)
+    ldy #LASTHEAP
+    jsr comma                    ; change NEXTHEAP to point to LASTHEAP  ('here' <= 'last')
+    jsr token                    ; get first token, the name of new word
+    ldy #0                       ; copy it to heap: length and name
+                                 ; code field comes with later proc
+CCLOOP0:    
+    lda (NXTTOK), y
+    cmp #$20                
+    beq CCMID
+CCCOPY:
+    sta (NEXTHEAP), y
+    iny
+    bne CCLOOP0
+CCMID:
+    tya                          ; and update NEXTHEAP  :  'here' incremented by length
+    ldx #(NEXTHEAP)
+    jsr addwx                   ; 'here' now at CFA
+
+    ldx #(CCEND0-CCCODE)
+    ldy #0
+CCLOOP:
+    lda CCCODE, y
+    sta (NEXTHEAP),y
+    iny
+    dex
+    bne CCLOOP
+    phy
+    lda NEXTHEAP+1
+    sta TEMP1+1
+    lda NEXTHEAP
+    clc
+    adc #17
+    sta TEMP1
+    bcc CCSKIP00
+    inc TEMP1+1
+CCSKIP00:
+    ldy #3
+    lda TEMP1
+    sta (NEXTHEAP),y
+    iny
+    lda TEMP1+1
+    sta (NEXTHEAP),y
+    inc TEMP1
+    lda TEMP1
+    bne CCSKIP01
+    inc TEMP1+1
+CCSKIP01:
+    ldy #8
+    lda TEMP1
+    sta (NEXTHEAP),y
+    iny 
+    lda TEMP1+1
+    sta (NEXTHEAP),y
+    lda TEMP8                  ; store constant val LSB
+    ldy #17
+    sta (NEXTHEAP),y
+    lda TEMP8+1                ; store constant val MSB
+    iny
+    sta (NEXTHEAP),y
+
+    pla                        ; update NEXTHEAP
+    ldx #NEXTHEAP
+    jsr addwx
+CCFINISH:    
+    lda BACKHEAP 
+    sta LASTHEAP                ; bring back BACKHEAP to LASTHEAP
+    lda BACKHEAP + 1 
+    sta LASTHEAP + 1
+                                
+    jmp next
+;
+;
+CCCODE:
+    bit $00
+    lda CCDATA                       
+    sta TEMP1                       
+    lda CCDATA+1                 
+    sta TEMP1+1                 
+    jsr spush_0
+    bra CCEND                   ; bra 2
+CCDATA:
+    .word 0                        ; 0 0 
+CCEND:
+    jmp next
+CCEND0:
 
 .ifdef SINGLE
 ;----------------------NUMERALS----------------------------------------
@@ -615,15 +834,15 @@ def_word "2drop", "drop2", 0
 ;
 ; (a b c d -- a b c d a b)
 def_word "2over", "over2", 0
-   ldy #TEMP4
-   jsr spull     ; to TEMP4 'd'
+   ldy #TEMP9
+   jsr spull     ; to TEMP9 'd'
    jsr spull_2  ; TEMP3 'c'
    jsr spull_1  ; TEMP2 'b'
    jsr spull_0  ; TEMP1 'a'
    jsr spush_0  ;  'a'
    jsr spush_1  ;  'b'
    jsr spush_2  ;  'c'
-   ldy #TEMP4
+   ldy #TEMP9
    jsr spush    ; 'd'
    jsr spush_0  ;  'a' again
    jsr spush_1  ;  'b' again
@@ -986,6 +1205,9 @@ def_word "syscall", "syscall", 0
     lda TEMP2
     jmp SYSCALL
     jmp next
+;
+;  "wfind" was here
+;
 ;----------------------------------------------------------------------------
 HYWORDS_END:
 ;  end hywords.s

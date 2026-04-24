@@ -27,15 +27,19 @@ ERREND:
 ;  
 err_jumptable:
     .res 2
-    ERR_entry PTR_ERR    ; stack full  - error 1
-    ERR_entry DIV_ERR    ; divide by zero - error 2
-    ERR_entry OOM_ERR    ; out of memory  - error 3
-    ERR_entry UKW_ERR    ; no existing word - error 4
-LASTERR = 4
+    ERR_entry RPTR_ERR    ; RT stack full  - error 1
+    ERR_entry SPTR_ERR    ; RT stack full  - error 2
+    ERR_entry DIV_ERR    ; divide by zero - error 3
+    ERR_entry OOM_ERR    ; out of memory  - error 4
+    ERR_entry UKW_ERR    ; no existing word - error 5
+LASTERR = 5
 ;
 ;  error messages
-PTR_ERR:
-    .byte " !PTR ERROR!"
+RPTR_ERR:
+    .byte " !RT PTR ERROR!"
+    .byte 0
+SPTR_ERR:
+    .byte " !DS PTR ERROR!"
     .byte 0
 DIV_ERR:
     .byte " !DIV ZERO!"
@@ -170,7 +174,7 @@ galois32o:
 ;              get delimited text from INBUF, pack and push on stack
 ;
 TEXTGET:
-    stz TEMP4
+    stz TEMP6
 		stz TEMP1
 		stz TEMP1+1
     ldy #1               ; skip len
@@ -216,7 +220,7 @@ TEXTGLOOP:
     lda (NXTTOK),y         
     cmp #'^'               ; when we hit the other end again...
     beq TEXTOK
-    sta TEMP4
+    sta TEMP6
     
 .ifdef DEBUG
     jsr DUMPREG          ; DEBUG
@@ -225,12 +229,12 @@ TEXTGLOOP:
     txa
     and #1
     bne TEXTODD
-    lda TEMP4
+    lda TEMP6
     sta TEMP1
     stz TEMP1+1
     bra TEXTSKIP2
 TEXTODD:
-    lda TEMP4
+    lda TEMP6
     sta TEMP1+1
     phx
     phy
@@ -295,7 +299,7 @@ DIGCONVT:    ;  Y is index into NXTPTR, X is length
 		stz TEMP1+1
     stz TEMP2            ; no necc for bin or hex, but
 		stz TEMP2+1          ; since is convenient....
-		stz TEMP4
+		stz TEMP6
     ldy #1               ; skip over length
 		lda #10
 		sta DIGBASE
@@ -308,7 +312,7 @@ DIGCONVT:    ;  Y is index into NXTPTR, X is length
 		beq DIGBIN1
     bra DIG_SNG
 DIGCONV_MINUS:
-		inc TEMP4
+		inc TEMP6
 		jmp DIG_XY
 DIGBIN1:
     lda #2
@@ -393,7 +397,7 @@ DIGCONT3:
     cmp #10
     bne DIGCONT4
 DECFINISH:
-		lda TEMP4                ; check for minus
+		lda TEMP6                ; check for minus
 		beq DIGCONT4
     lda TEMP1
     eor #$FF
@@ -441,7 +445,7 @@ GETDIG_ERR:          ; pass carry set for no digit
 ;
 HYWELCOME:
     .byte CR, LF
-    .byte "HyForth 0.80 04-18-2026"
+    .byte "HyForth 0.81 04-24-2026"
     .byte CR, LF, $00
 CLEAR:
     lda #1
