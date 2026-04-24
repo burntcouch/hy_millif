@@ -203,14 +203,6 @@ SPCLOOP:
     ldx #TEMP1
     jsr addwx
 
-; check if is a primitive
-;    lda TEMP1 + 1
-;    cmp #>ends + 1
-;    bmi WORD_CONT
-;
-; list references
-;    ldy #0
-;    jsr show_refer
      lda TEMP3           ; instead of printing refs, just advance TEMP1 to TEMP3
      sta TEMP1
      lda TEMP3+1
@@ -239,110 +231,14 @@ WORD_END:
 ;
 ;-------------------------------------- WORDS ---------------------
 ; ( -- ) words in dictionary, 
-def_word "oldw", "oldw", 0
-
-; load last
-    lda LASTHEAP + 1
-    sta TEMP2 + 1
-    lda LASTHEAP
-    sta TEMP2
-
-; load here
-    lda NEXTHEAP + 1
-    sta TEMP3 + 1
-    lda NEXTHEAP
-    sta TEMP3
-    
-WORDLOOP1:
-    lda TEMP2        ; lsb linked list
-    sta TEMP1
-    ora TEMP2 + 1    ; check if $0000
-    bne WORDSKIP1
-    jmp WORDSEND  
-WORDSKIP1:
-
-    lda TEMP2 + 1    ; msb linked list
-    sta TEMP1 + 1
-
-    WCRLF_np
-    
-; print address
-    lda #'-'
-    jsr WRITE_CHAR
-
-    lda TEMP1 + 1
-    jsr WRITE_BYTE
-    lda TEMP1
-    jsr WRITE_BYTE
-
-; print link
-    lda #'-'
-    jsr WRITE_CHAR
-
-    ldy #1
-    lda (TEMP1), y
-    jsr WRITE_BYTE
-    dey 
-    lda (TEMP1), y
-    jsr WRITE_BYTE
-
-    ldx #TEMP1
-    lda #2
-    jsr addwx
-
-; put size + flag, name
-    ldy #0
-    jsr show_name
-
-; update
-    iny
-    tya
-    ldx #TEMP1
-    jsr addwx
-
-; show Code Field Address (CFA)
-    lda #' '
-    jsr WRITE_CHAR
-    
-    lda TEMP1 + 1
-    jsr WRITE_BYTE
-    lda TEMP1
-    jsr WRITE_BYTE
-
-; check if is a primitive  - FIX THIS, ANOTHER WAY NECC.
-    lda TEMP1 + 1
-    cmp #>ends + 1
-    bmi WORDSCONT
-
-; list references
-    ldy #0
-    jsr show_refer
-
-WORDSCONT: 
-    lda TEMP2
-    sta TEMP3
-    lda TEMP2 + 1
-    sta TEMP3 + 1
-
-    ldy #0
-    lda (TEMP3), y
-    sta TEMP2
-    iny
-    lda (TEMP3), y
-    sta TEMP2 + 1
-
-    ldx #TEMP3
-    lda #2
-    jsr addwx
-
-    jmp WORDLOOP1
-
-WORDSEND:
-    WCRLF_np
-    clc  ; clean
-    jmp next
-
+;def_word "oldw", "oldw", 0
+;
+;  removed 4/24/26 - see previous versions of 'primitives.s'
+;
 ;----------------------------------------------------------------------
+;
+;  routines needed for 'words'
+;
 ; print size and name 
 show_name:
      lda #':'
@@ -368,37 +264,40 @@ NAMELOOP:              ; name
     rts
 
 ;----------------------------------------------------------------------
+;
+;  holdover from original 'words' but keep for now
+;
 show_refer:
 ; print references (PFA - parameter field addresses) 
-    ldx #(TEMP1)
-
-SHWREFLOOP:
-    lda #' '
-    jsr WRITE_CHAR
-    lda TEMP1 + 1
-    jsr WRITE_BYTE
-    lda TEMP1
-    jsr WRITE_BYTE
-    lda #':'
-    jsr WRITE_CHAR
-    iny 
-    lda (TEMP1), y
-    jsr WRITE_BYTE
-    dey
-    lda (TEMP1), y
-    jsr WRITE_BYTE
-    lda #2
-    jsr addwx
-
+;    ldx #(TEMP1)
+;
+;SHWREFLOOP:
+;    lda #' '
+;    jsr WRITE_CHAR
+;    lda TEMP1 + 1
+;    jsr WRITE_BYTE
+;    lda TEMP1
+;    jsr WRITE_BYTE
+;    lda #':'
+;    jsr WRITE_CHAR
+;    iny 
+;    lda (TEMP1), y
+;    jsr WRITE_BYTE
+;    dey
+;    lda (TEMP1), y
+;    jsr WRITE_BYTE
+;    lda #2
+;    jsr addwx
+;
 ; check if at the end
-    lda TEMP1
-    cmp TEMP3
-    bne SHWREFLOOP
-    lda TEMP1 + 1
-    cmp TEMP3 + 1
-    bne SHWREFLOOP
-    rts
-
+;    lda TEMP1
+;    cmp TEMP3
+;    bne SHWREFLOOP
+;    lda TEMP1 + 1
+;    cmp TEMP3 + 1
+;    bne SHWREFLOOP
+;    rts
+;
 ;----------------------------------------------------------------------
 ;  seek for addr of 'exit' at end of sequence of references
 ;  max of 254 references in list

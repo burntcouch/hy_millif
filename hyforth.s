@@ -215,6 +215,8 @@ DEBUG := 1        ; enable inclusion of debug code
 
 HYWORDS := 1      ; add in additional hardcoded words / logic
 
+ANSIOK := 1         ; add ANSI screen stuff
+
 ;LUTABLE := 1     ; CFA->length/flag byte lookup table
 
 ;---------------------------------------------------------------------
@@ -256,8 +258,9 @@ DSEND = $7E
 ; moves backwards, push decreases before copy
 RTEND = $FE
 
-; reserved for scribbles
-SCRIBB = RTEND
+; malloc stack
+; moves backwards
+MMEND = $FE
 
 ;----------------------   BIOS calls -----------------------------------
 WRITE_CHAR = $F803
@@ -274,6 +277,7 @@ INROM = $A000
 ALTBUF = $6000
 ALTBUF_end = $6FFF
 LENLU = $7FFE
+MEMTOP = $7FFE
 
 ;----------------------------------------------------------------------
 ;       Look closely at hyforth.cfg and the output of ca65/ld65 after
@@ -441,9 +445,7 @@ warm:
     sta NEXTHEAP + 1
     stz NEXTHEAP
     stz ERRFLAG                ; clear ERROR flag
-.ifdef LUTABLE
-    jsr BUILDLU
-.endif    
+ 
 ;---------------------------------------------------------------------
 ; various reinitialization points
 ;
@@ -922,8 +924,17 @@ ROMCODEEND:                         ; end of all code
 ;                            TRAINING DATA
 ;
 ; include training data
-    .res 16
+    .res 8
+    .byte "FTRAIN"
+    .byte 0,0
 .include "ftrain.s"
+;
+;                            BINARY LOAD
+;
+    .res 9
+    .byte "BLOAD"
+    .byte 0,0
+.include "bload.s"
 ;
 ;  end of hyforth.s
 ;

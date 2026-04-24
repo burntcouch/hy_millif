@@ -3,13 +3,6 @@
 ;
 ; hywords.s
 ;
-;----------------------------------------------------------------------
-;               NEW NEW NEW NEW NEW
-;
-;----------------------------------------------------------------------
-; wish list: $A,$B,..,$F, %0, %1, %10, %11
-;    dup, over, rot, -, <>, =, gt, ge, lt, le, true, false
-;
 ;----------------------UTILITIES--------------------------------------
 def_word "cr", "crlf", 0
      lda #CR
@@ -34,6 +27,10 @@ def_word "here", "here", 0                   ; NEXTHEAP addr onto stack
     lda #NEXTHEAP
     bra REGIN
 ;
+def_word "back", "back", 0                   ; NEXTHEAP addr onto stack
+    lda #BACKHEAP
+    bra REGIN
+;
 def_word "sp", "sp", 0                       ; DSPTR pointer addr onto stack
     lda #DSPTR
     bra REGIN
@@ -42,23 +39,25 @@ def_word "rp", "rp", 0                       ; RTPTR pointer addr onto stack
     lda #RTPTR
     bra REGIN
 ;
-
-def_word "allot", "allot", 0
-    jsr spull_0       ; get byte count from stack, put in TEMP1
-    ldy #1
-    lda (NEXTHEAP),y
-    sta TEMP2+1
-    dey
-    lda (NEXTHEAP),y
-    sta TEMP2
-    clc
-    adc TEMP1
-    sta (NEXTHEAP),y
-    lda TEMP2+1
-    adc TEMP1+1
-    iny
-    sta (NEXTHEAP),y
-    jmp next
+;
+; removed 4/24/26 - not used, do var/cons differently
+;
+;def_word "allot", "allot", 0
+;    jsr spull_0       ; get byte count from stack, put in TEMP1
+;    ldy #1
+;    lda (NEXTHEAP),y
+;    sta TEMP2+1
+;    dey
+;    lda (NEXTHEAP),y
+;    sta TEMP2
+;    clc
+;    adc TEMP1
+;    sta (NEXTHEAP),y
+;    lda TEMP2+1
+;    adc TEMP1+1
+;    iny
+;    sta (NEXTHEAP),y
+;    jmp next
 ;                             ': >r rp @ @ swap rp @ ! rp @ 2 - rp ! rp @ ! ;'
 def_word ">r", "s_to_r", 0
     jsr spull_0   ; put top of stack in TEMP1
@@ -80,15 +79,16 @@ def_word "r>", "r_to_s", 0
 Fbranch:                          ; [IP] = IP
      ldy #0
      lda (INSTPTR), y
-     sta TEMP5
+     sta TEMP4
      iny
      lda (INSTPTR), y
+     sta TEMP4+1
      sta INSTPTR+1
-     lda TEMP5
+     lda TEMP4
      sta INSTPTR
      jmp next
 ;     
-Fskip:                          ; USED by 'lit' and '?bra'
+Fskip:
      lda INSTPTR                   ; 'skip' (IP += 2)
      clc
      adc #2
@@ -166,8 +166,13 @@ def_word "lit", "literal", 0
      jsr spush_0
      jmp Fskip
 ;
+;
+;       MEMORY management:  VAR, CONS, ARRAY, etc.
+;
+;
 ;         HF version of 'variable'
 ;
+; ( -- )
 def_word "var", "var", 0
 
     lda NEXTHEAP
@@ -273,7 +278,13 @@ VCFINISH:
     sta LASTHEAP + 1
                                 
     jmp next
-    
+;
+;    VCCODE - not used yet here, seeing the payoff 
+;    (probably faster and easier to follow)
+;    pre-built code to copy in (see cons below)
+;
+;   (saves about 20 bytes in cons)
+;   
 VCCODE:
    bit $00
    lda #<VCDATA               ; <NEXTHEAP+13   (offset +3) 
@@ -290,6 +301,7 @@ VCEND0:
 ;
 ;  HF version of 'constant'
 ;
+; ( cv -- )
 def_word "cons", "cons", 0
     lda NEXTHEAP
     sta BACKHEAP                ; backup NEXTHEAP to BACKHEAP
@@ -373,6 +385,8 @@ CCFINISH:
                                 
     jmp next
 ;
+;   cons copies this in and 'customizes it' by
+;   plugging in corrected address for CCDATA
 ;
 CCCODE:
     bit $00
@@ -473,8 +487,8 @@ def_word "-1", "negone", 0
      sta TEMP1
 DOWITHNEG:
      sta TEMP1+1
-     jsr spush_0
-     jmp next 
+;     jsr spush_0
+     jmp this
 
 ; ( -- n ) numeral 0
 def_word "$0", "zerohex", 0
@@ -484,8 +498,8 @@ DOITZERO:
      lda #0
      sta TEMP1
      sta TEMP1+1
-     jsr spush_0
-     jmp next
+;     jsr spush_0
+     jmp this
      
 ; ( -- n ) numeral -2
 def_word "-2", "negtwo", 0
@@ -749,8 +763,6 @@ def_word "swap", "swap", 0
 ;  (a -- a a)
 def_word "dup", "dup", 0
    jsr spull_0          ; pull top to TEMP1
- ;  lda TEMP1
- ;  lda TEMP1+1
    jsr spush_0          ; and then push back
    jmp this            ; includes jsr spush_0 for second time
 ;
@@ -951,6 +963,7 @@ CLSKIP:
 ;
 ;
 ; ( -- )   ANSI clear screen
+.ifdef ANSIOK
 def_word "Acls", "Acls", 0
     lda #27
     jsr WRITE_CHAR
@@ -1013,6 +1026,8 @@ ACOLNXT2:
     lda #'m'
     jsr WRITE_CHAR    
     jmp next
+.endif   ; ANSIOK    
+    
 ;
 ;--------------------------RANDOM #'s
 ; ( s s -- )   random # 

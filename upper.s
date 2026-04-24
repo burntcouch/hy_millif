@@ -55,17 +55,17 @@ UKW_ERR:
 ;
 WRITE_HSTRING:
                 phx
-                sta             TEMP8
-                sty             TEMP8+1
-                lda             (TEMP8)                ; Length of HString
+                sta  TEMP8
+                sty  TEMP8+1
+                lda  (TEMP8)       ; Length of HString
                 tax
-                ldy             0
+                ldy  0
 @write_loop:
                 iny
-                lda             (TEMP8),Y
+                lda  (TEMP8),Y
                 jsr  WRITE_CHAR
                 dex
-                bne             @write_loop
+                bne  @write_loop
                 plx
                 rts   
     
@@ -440,12 +440,12 @@ GETDIG_ERR:          ; pass carry set for no digit
 .endif    ; numbers
 ;--------------------------------- CLEAR ------------------------------
 ;
-;  zero out $E0 - $FF, meet and greet
+;  zero out $C8 - $FF, meet and greet
 ;  zero out INBUF also
 ;
 HYWELCOME:
     .byte CR, LF
-    .byte "HyForth 0.81 04-24-2026"
+    .byte "HyForth 0.85 04-24-2026"
     .byte CR, LF, $00
 CLEAR:
     lda #1
