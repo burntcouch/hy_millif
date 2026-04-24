@@ -67,13 +67,13 @@ makelabel "", label
 .macro  WSEQ_np  strlbl
      phy
      ldy #0
-@wsqloop:
+:
      lda strlbl, y
-     beq @wsqend
+     beq :+
      iny
      jsr WRITE_CHAR
-     bra @wsqloop
-@wsqend:
+     bra :-
+:
      WCRLF_np
      ply
 .endmacro
@@ -82,13 +82,13 @@ makelabel "", label
 .macro  WSEQ_raw  strlbl
      phy
      ldy #0
-@wsqloop:
+:
      lda strlbl, y
-     beq @wsqend
+     beq :+
      iny
      jsr WRITE_CHAR
-     bra @wsqloop
-@wsqend:
+     bra :-
+:
      ply
 .endmacro
 
@@ -170,24 +170,24 @@ werrend:
 ;
 ;    left / right shift shortcuts
 ;
-.macro SL_N     n
-    .if     n > 0
-                asl
-                SL_N    n-1
-    .endif
+.macro SL_N  n
+  .if  n > 0
+      asl
+      SL_N   n-1
+  .endif
 .endmacro
 
-.macro SR_N     n
-    .if     n > 0
-                lsr
-                SR_N    n-1
-    .endif
+.macro SR_N  n
+  .if  n > 0
+      lsr
+      SR_N   n-1
+ .endif
 .endmacro
 ;
 ;  HString stuff
 ;
 .macro HString Str
-    .byte       .strlen(Str), Str
+    .byte .strlen(Str), Str
 .endmacro
 
 .macro NamedHString Name, Str
@@ -215,16 +215,18 @@ DEBUG := 1        ; enable inclusion of debug code
 
 HYWORDS := 1      ; add in additional hardcoded words / logic
 
+;LUTABLE := 1     ; CFA->length/flag byte lookup table
+
 ;---------------------------------------------------------------------
 ;              for PGS hyforth stuff
 ;
 ; error codes
 ;
-ERR_PTR := $01
-ERR_DIV0 := $02
-ERR_MEM := $03
-ERR_UKW := $04
-
+ERR_RPTR := $01
+ERR_SPTR := $02
+ERR_DIV0 := $03
+ERR_MEM := $04
+ERR_UKW := $05
 ;
 ;---------------------------------------------------------------------
 ;                CHARACTER CONSTANTS
@@ -270,7 +272,8 @@ ZP_XAM = $31       ; can we see address left by DISASM here?
 
 INROM = $A000
 ALTBUF = $6000
-ALTBUF_end = $77FF
+ALTBUF_end = $6FFF
+LENLU = $7FFE
 
 ;----------------------------------------------------------------------
 ;       Look closely at hyforth.cfg and the output of ca65/ld65 after
@@ -294,12 +297,21 @@ ALTBUF_end = $77FF
 ;                   ZERO PAGE USAGE
 ;----------------------------------------------------------------------
 .segment "ZP"
-.org $D0
+.org $C8
 ZPSTART:
 ;
 ;                   HyForth setup stuff
 ;
-TEMP8:
+TEMP0:                        ;  DUMPREG         $C8
+   .res 2
+TEMP8:                        ;  Hstring macro   $CA
+   .res 2
+TEMP9:                        ;                  $CC
+   .res 2
+TEMP10:                       ;                  $CE
+   .res 2
+LUPTR:           ;PTR for length/flag lookup table
+MEMPTR:                
    .res 2                      ;                 $D0
 TIB:
    .res 2          ; pointer to input buffer     $D2
@@ -314,55 +326,52 @@ ERRPTR:
 DIGBASE:
    .res 1          ; base for number conversion  $DA
 RSEED:        
-   .res 4          ; random # seed   $DB
-ALFLAG:            ; autoload flag   $DF
-   .res 1          ; spare space
+   .res 4          ; random # seed               $DB
+ALFLAG:            ; autoload flag               $DF
+   .res 1          
 ;
+;                   internal Forth 
 ;
-nil:               ; at $E0 now
+STATUS:     .word $0   ; state at lsb, last size+flag at msb   $E0
+CURBUF:     .word $0   ; CURBUF next free byte in TIB          $E2
+LASTHEAP:   .word $0   ; last link cell                        $E4
+NEXTHEAP:   .word $0   ; next free cell in heap dictionary     $E6
 ;
-;          internal Forth 
+;                   pointer registers
 ;
-STATUS:     .word $0   ; state at lsb, last size+flag at msb
-CURBUF:     .word $0   ; CURBUF next free byte in TIB
-LASTHEAP:   .word $0   ; last link cell
-NEXTHEAP:   .word $0   ; next free cell in heap dictionary
+DSPTR:      .word $0   ; data stack pointer                    $E8
+RTPTR:      .word $0   ; return stack pointer                  $EA
+INSTPTR:    .word $0   ; instruction pointer                   $EC
+WORKREG:    .word $0   ; working register                      $EE
 ;
-;         pointer registers
+;                    TEMP1 - 4
 ;
-DSPTR:      .word $0   ; data stack pointer
-RTPTR:      .word $0   ; return stack pointer
-INSTPTR:    .word $0   ; instruction pointer
-WORKREG:    .word $0   ; working register
-;
-;        free for use
-;
-mainoff:                            ; use for COPYTORAM, MEMCPY
-TEMP1:    .word $0     ; first
-endsoff:
-TEMP2:    .word $0     ; second
-ramstart:
+mainoff:               ; used for COPYTORAM, MEMCPY
+TEMP1:    .word $0     ; first                                 $F0
+endsoff:               ; used for COPYTORAM, MEMCPY
+TEMP2:    .word $0     ; second                                $F2
+ramstart:              ; used for COPYTORAM, MEMCPY
 ZP_D_ICOUNT:                         ; DISASM
-TEMP3:    .byte 0      ; third  (two bytes)
-ZP_D_EXBYTES:                        ; DISASM
+TEMP3:    .byte 0      ; third  (two bytes)                    $F4
+ZP_D_EXBYTES:                        ; DISASM                  $F5
           .byte 0 
 ZP_D_STATE:                          ; DISASM
-TEMP0:
-TEMP4:    .byte 0      ; fourth  (two bytes)
-ZP_D_MODE:                           ; DISASM
+TEMP4:    .byte 0      ; fourth  (two bytes)                   $F6  
+ZP_D_MODE:                           ; DISASM                  $F7
           .byte 0 
 ;
-;          used, reserved
+;          NXTTOK, BACKHEAP, TEMP5 - 7
 ;
-NXTTOK:     .word $0   ; next token in tib (INBUF)
-BACKHEAP:   .word $0   ; hold 'here while compile
+NXTTOK:     .word $0   ; next token in tib (INBUF)             $F8
+BACKHEAP:   .word $0   ; hold 'here while compile              $FA
 supprint:              ; suppress printing in MEMCPY
-TEMP5:   .res 1        ; byte temp
-ZP_D_INST:                           ; DISASM, three bytes
-TEMP6:   .res 1        ; byte temp
-TEMP7:   .res 2        ; word temp
+FFLAG:                 ; 'find flag' for wfind entry point
+TEMP5:   .res 1        ;    DISASM, WORDS, WFIND               $FC
+ZP_D_INST:             ;    DISASM, three bytes
+TEMP6:   .res 1        ;    WORDS, DIGCONT, TEXTGET, DISASM    $FD
+TEMP7:   .res 2        ;            AUTOLOAD, DISASM           $FE
 ;
-; *** $C8-$FF total usage in ZP, including TEMP vars ***
+; *** $DO-$FF total usage in ZP, including TEMP vars ***
 ;
 ;   HYDRA-16 serial/read buffers at $200 and $300 so skip those
 ;
@@ -397,6 +406,13 @@ HYPROMPT:
     .byte $0D, $0A
     .byte "HF>"
     .byte 0
+WDISP:
+    .byte $0D, $0A
+    .byte "W="
+    .byte 0
+WATDISP:
+    .byte "  [W]="
+    .byte 0
 SYSCALL:
     jsr SCDUMMY        ; store into SCDUMMY+1, +2 to customize jump
     txa                ; returned stuff in X
@@ -425,7 +441,9 @@ warm:
     sta NEXTHEAP + 1
     stz NEXTHEAP
     stz ERRFLAG                ; clear ERROR flag
-
+.ifdef LUTABLE
+    jsr BUILDLU
+.endif    
 ;---------------------------------------------------------------------
 ; various reinitialization points
 ;
@@ -447,7 +465,7 @@ reset:
     
     lda #1                       ; DEBUG OFF by default
     sta DFLAG 
-    stz ALFLAG
+    stz ALFLAG                   ; autoload flag OFF
     
 abort:                            ; clear DS
     ldy #<DSEND
@@ -472,10 +490,8 @@ quit:                             ; clear RT
 
 resolvept:
     .word okey
-
 ;---------------------------------------------------------------------
-okey:
-    
+okey:               ; well shit, I hope this is easy....
 resolve:           ; get a token
     jsr token      ; then just process the regular way
 .ifdef DEBUG    
@@ -488,7 +504,7 @@ resolve:           ; get a token
     
 RVPSKIP:
 
-RESFIND:                ; load last word on heap
+RESFIND:                ; load last or 'latest' word on heap
     lda LASTHEAP + 1
     sta TEMP2 + 1
     lda LASTHEAP
@@ -496,13 +512,12 @@ RESFIND:                ; load last word on heap
     
 RESLOOP:              ; lsb linked list
     lda TEMP2
-    sta WORKREG
+    sta WORKREG             ; so 'last' -> W
     ora TEMP2+1             ; only zero if both are zero
     bne RESEACH              ; PGS - did he forget this?                       
                            
 WORDNOTFOUND:                          
-    ;WSEQ NOT_OKAY            ; "?!" message
-    lda #ERR_UKW
+    lda #ERR_UKW           ; UNKNOWN WORD error
     sta ERRFLAG
     jmp errrtn ; end of dictionary, no more words to search, abort
 
@@ -512,11 +527,16 @@ RESEACH:                        ; msb linked list
     
     ldx #WORKREG           
     ldy #TEMP2      
-    jsr copyfrom                  ; W += 2  (odd way to do it since don't use TEMP2 again?)
+    jsr copyfrom                  ; W += 2, now pointing at size/flag byte from 'here'
     ldy #0              ; compare words
     lda (WORKREG), y    ; save the flag, first byte is (size and flag) 
     sta STATUS + 1
-
+            ;; *** start of mod for bit check
+    and #$3F            ; mask off flags
+    sec                 
+    sbc (NXTTOK), y    ; compare lengths
+    bne RESLOOP
+    iny    
 ; compare chars
 RESEQUAL:
     lda (NXTTOK), y
@@ -530,7 +550,7 @@ RESEQUAL:
     bne RESEQUAL
 
 RESDONE:
-    tya                ; update WORKREG
+    tya                ; increment W by y, W will point at CFA?
     jsr addwx
     
 eval:
@@ -538,7 +558,8 @@ eval:
     lda STATUS   
     beq execute
 ;
-; immediate ? if status+1 < 0
+; falls thru on compile, but...
+; immediate ? if status+1 < 0 (bit seven set)
     lda STATUS + 1   
     bmi immediate      
 
@@ -551,9 +572,9 @@ compile:          ; otherwise compile
     jsr WRITE_CHAR   
 CMPSKIP:
 .endif
-    jsr wcomma
-    bcs immediate
-    jmp resolve
+    jsr wcomma          ; copy W into NEXTHEAP ('here'), increment NEXTHEAP
+    bcs immediate       
+    jmp resolve         ; if not 'immediate' go on to next token
 ;    
 immediate:
 execute:
@@ -635,9 +656,9 @@ GETLNSKIPCRLF:          ; SKIP to here if don't want CRLF
     dey
 ; start it
     sta CURBUF
-.ifdef DEBUG  
-    jsr DUMPREG
-.endif
+;.ifdef DEBUG  
+;    jsr DUMPREG
+;.endif
     
 ;---------------------------------------------------------------------
 ; in place every token,
@@ -740,7 +761,7 @@ wcomma:
     ldy #WORKREG                  ; copy addr at WORKREG, change addr fld NEXTHEAP points to
 comma: 
     ldx #NEXTHEAP                 ; Y has source of address, change addr fld NEXTHEAP points to
-    ; fall through - to?  copyinto, then rts
+    ; fall through - copyinto, then rts after second incwx
 ;---------------------------------------------------------------------
 ; from a page zero address indexed by Y
 ; into a page zero indirect address indexed by X
@@ -774,13 +795,13 @@ spush:
     ldx #DSPTR
     lda DSPTR
     cmp #<DS                ; ditto
-    beq ptrerr              ; ditto
+    beq ptrerr_s              ; ditto
     jmp push
 rpush:
     ldx #RTPTR
     lda RTPTR               ; ditto
     cmp #<RT                ; ditto
-    beq ptrerr
+    beq ptrerr_r
 ;---------------------------------------------------------------------
 ; classic stack backwards
 push:
@@ -793,8 +814,12 @@ push:
     rts  
 ;
 ;                      pointer error (DS or RT)
-ptrerr:                      ; pop jsr off stack, throw error
-    lda #ERR_PTR
+ptrerr_r:                      ; pop jsr off stack, throw error
+    lda #ERR_RPTR
+    bra ptrerr_cont
+ptrerr_s:
+    lda #ERR_SPTR
+ptrerr_cont:
     sta ERRFLAG
     pla
     pla
@@ -821,13 +846,13 @@ spull:
     ldx #DSPTR
     lda DSPTR         ; pointer bounds checking
     cmp #DSEND        ; ditto
-    beq ptrerr        ; ditto
+    beq ptrerr_s        ; ditto
     jmp pull
 rpull:                ; !!! RPULL requires explicit loading of dest to Y !!!
     ldx #RTPTR
     lda RTPTR        ; pointer bounds checking
     cmp #RTEND        ; ditto
-    beq ptrerr        ; ditto
+    beq ptrerr_r        ; ditto
 
 ;---------------------------------------------------------------------
 ;
@@ -848,8 +873,8 @@ incwx:
 ;---------------------------------------------------------------------
 ; add a byte in A to a word in page zero. offset by X
 addwx:
-    clc
-    adc 0, x
+    clc                  ; this is absolute to a ZP address, remember, so...
+    adc 0, x             ; note: if x offsets to a pointer, it increments it!
     sta 0, x
     bcc addwx_end
     inc 1, x
@@ -998,18 +1023,18 @@ FETCH_WX:                    ; set X from somewhere else
 def_word "I", "Imm", 0   
 wimm:                        ; jmp here if proccessing a compiled
     lda LASTHEAP+1           ;   word that needs to run 'immediate'.
-    sta TEMP4+1
+    sta TEMP9+1
     lda LASTHEAP             ; get addr of 'last' compiled word, copy to TEMP4, add 2
     clc
     adc #2                   ; ..to find where length byte is...
-    sta TEMP4                  
+    sta TEMP9                  
     bcc IMMSKIP
     inc TEMP4+1
 IMMSKIP:
     ldy #0
-    lda (TEMP4),y
+    lda (TEMP9),y
     ora #$80                 ; ...set bit 7 and store
-    sta (TEMP4),y
+    sta (TEMP9),y
     jmp next
 
 def_word "[", "leftbrack", FLAG_IMM       ; switch to 'interpret'
@@ -1020,7 +1045,11 @@ def_word "]", "rtbrack", 0               ; switch back to 'compile'
     lda #1
     sta STATUS
     jmp next
-    
+;
+;    
+                                         ; NOTE: 'lit' or similar will have pushed a value
+                                         ; or address onto stack; 'comma' stores it inline in word
+                                         ;
 def_word ",", "xcomma", 0                ; pull data from top of stack, store at 'here', adjust
     jsr spull_0                          ; 'here' to point at next cell
     ldy #0                               
@@ -1071,27 +1100,29 @@ def_word ":", "colon", 0
 COMPHEADER:
 ; copy LASTHEAP into (NEXTHEAP)
     ldy #LASTHEAP
-    jsr comma                    ; change NEXTHEAP to point to LASTHEAP
-
-    jsr token                    ; get next token
-
+    jsr comma                    ; change NEXTHEAP to point to LASTHEAP  ('here' <= 'last')
+    jsr token                    ; get first token, the name of new word
     ldy #0                       ; copy it to heap: length and name
                                  ; code field comes with later proc
 COMPLOOP:    
     lda (NXTTOK), y
     cmp #$20                
     beq COMPEND
+    cpy #0                       ; if this is the length field...
+    bne COMCOPY
+    ora #$40                     ; set bit six for 'compiled' word
+COMCOPY:
     sta (NEXTHEAP), y
     iny
     bne COMPLOOP
 
 COMPEND:
-    tya                          ; and update NEXTHEAP
+    tya                          ; and update NEXTHEAP  :  'here' incremented by length
     ldx #(NEXTHEAP)
-    jsr addwx
+    jsr addwx                   ; 'here' now at CFA
 
 ;~~~~~~~~ all done....
-    jmp next                     ; and then see below; compiled word 
+    jmp next                     ; and then see below; compiled word will continue until ';'
 ;---------------------------------------------------------------------
 ; Thread Code Engine
 ;
@@ -1116,13 +1147,42 @@ next:                        ;    go on to next word; IP is pointing at next ent
     ldy #WORKREG
     jsr copyfrom             ; W = [IP], IP += 2  ( and either ENTER or EXECUTE )
 
-                          ; FIX, this sucks in many ways...bit 6 of length byte set for primitives?
-pick:                     ;                COMPILED OR PRIMITIVE?
-    lda WORKREG + 1       ; compare pages (MSBs)
-    cmp #>ends + 1        ;  !! Compiled must be higher in memory than hardcoded !! (see below)
-    bmi jump              ; jump over nest if not a compiled word
+                           ; FIX, this sucks in many ways...bit 6 of length byte should be set for compiled
+pick:                      ;                COMPILED OR PRIMITIVE?
+                           ; let's figure out if STATUS+1 still has length btye for previous word...
+                           ; if so, we can look at bit 6 to do 'pick' instead of using 'compare pages'
+                           ;
+.ifdef DEBUG
+     lda DFLAG
+     bne PRINTWSKIP        ; print W and etc if DEBUG
+     WSEQ_raw WDISP
+     lda WORKREG+1
+     jsr WRITE_BYTE
+     lda WORKREG
+     jsr WRITE_BYTE
+     WSEQ_raw WATDISP
+     ldy #0
+     lda (WORKREG),y
+     jsr WRITE_BYTE
+PRINTWSKIP:
+.endif
+                 ; .. and stick with the good old-fashioned way
+     lda WORKREG + 1       ; compare pages (MSBs)
+     cmp #>ends + 1        ;  !! Compiled must be higher in memory than hardcoded !! (see below)
+     bmi jump              ; jump over nest if native code
+     ldy #0
+     lda (WORKREG),y      ; see if WORKREG is pointing at 'bit 00'
+     cmp #$24
+     bne nest             ; nope, tis compiled fer sure
+     iny
+     lda (WORKREG),y
+     cmp #0
+     beq jump               ; yep, jump to native execution
 
 nest:                     ; ENTER in classic Forth lingo   ( COMPILED )
+
+    jsr DUMPREG
+
     ldy #INSTPTR
     jsr rpush                   ; RTPTR -=2, [RTPTR] = [IP] 
     lda WORKREG                 ; W = IP

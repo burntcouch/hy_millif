@@ -12,6 +12,15 @@ def_word "bye", "bye", 0
 def_word "abort", "abort_", 0
     jmp abort
 
+; ( -- ) resets buffer to INBUF
+def_word "reset", "reset_", 0
+    jmp reset
+
+; ( -- ) interpreter 'resolve'
+;def_word "interp", "interp", FLAG_COM
+;okey:
+;    jmp resolve
+
 ;----------------------------------------------------------------------
 ; ( -- ) ae list of data stack
 def_word ".S", "splist", 0       ; changed from %S
@@ -106,32 +115,7 @@ list:
     
 ;------------------------------- ODUMP AND DUMP ---------------------------------------
 ; ( -- ) dumps the user dictionary
-def_word "odump", "odump", 0
-    lda #$0
-    sta TEMP1
-    lda #>ends + 1
-    sta TEMP1 + 1
-    ldx #TEMP1
-    ldy #0
-@loop:
-    lda TEMP1
-    cmp NEXTHEAP
-    bne @dumpcont
-    lda TEMP1+1
-    cmp NEXTHEAP+1
-    beq @dumpend
-@dumpcont:    
-    lda (TEMP1),y
-    jsr WRITE_BYTE          ; was WRITE_CHAR
-    lda #$20
-    jsr WRITE_CHAR
-    jsr incwx
-    bra @loop
-    
-@dumpend:    
-    WCRLF_np
-    clc  ; clean
-    jmp next 
+;    ( REMOVED as of 4/19/26 )
 
 ; ( -- ) dump memory
 def_word "dump", "dump", 0
@@ -156,7 +140,7 @@ FDUMPGET:
 ;------------------------------ WLIST -----------------------------------
 ;
 ; ( -- ) clean word list, 
-def_word "wlist", "wlist", 0
+def_word "words", "words", 0
 
 ; load LASTHEAP
     lda LASTHEAP + 1
@@ -169,8 +153,8 @@ def_word "wlist", "wlist", 0
     sta TEMP3 + 1
     lda NEXTHEAP
     sta TEMP3
-    
     stz TEMP5
+    dec TEMP5
     
 WORD_LOOP:
     inc TEMP5       ; increment 'words per line' count
@@ -187,8 +171,8 @@ WORD_LOOP:
     WCRLF_np
     stz TEMP5
     
-WORD_SKIP:
-; put address
+WORD_SKIP:               ; TEMP1 has address of work-record, 
+; put address            ; (TEMP1) is link to previous record
     lda #' '
     jsr WRITE_CHAR
     lda TEMP1 + 1
@@ -196,7 +180,7 @@ WORD_SKIP:
     lda TEMP1
     jsr WRITE_BYTE
 
-    ldx #TEMP1          ; advance TEMP1 to name+flag
+    ldx #TEMP1          ; advance TEMP1 to size + flag, name
     lda #2
     jsr addwx
     ldy #0                
@@ -255,7 +239,7 @@ WORD_END:
 ;
 ;-------------------------------------- WORDS ---------------------
 ; ( -- ) words in dictionary, 
-def_word "words", "words", 0
+def_word "oldw", "oldw", 0
 
 ; load last
     lda LASTHEAP + 1
