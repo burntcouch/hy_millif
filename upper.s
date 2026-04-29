@@ -437,6 +437,63 @@ GETDIG_ERR:          ; pass carry set for no digit
     rts
 ;  end of new number conv
 ;
+H2NUM: .byte $27,$10
+ .byte $03,$E8
+ .byte $00,$64
+ .byte $00,$0A
+HEX2DEC:            ; low/high in A,Y - use X, TEMP1, TEMP3, TEMP4, TEMP6
+   sty TEMP3+1
+   sta TEMP3
+   ldx #0
+H2DDIV10:
+   lda H2NUM,x
+   sta TEMP4+1
+   inx
+   lda H2NUM,x
+   sta TEMP4
+   inx
+   stz TEMP6
+H2DLOOP:
+   lda TEMP3+1
+   cmp TEMP4+1
+   bcc  H2DSK1
+   bne  H2DSK0
+   lda TEMP3
+   cmp TEMP4
+   bcc  H2DSK1
+H2DSK0:
+   lda TEMP3
+   sec
+   sbc TEMP4
+   sta TEMP3
+   lda TEMP3+1
+   sbc TEMP4+1
+   sta TEMP3+1
+   inc TEMP6
+   bra H2DLOOP
+H2DSK1:
+   lda TEMP6
+   clc
+   adc #$30
+   sta TEMP1
+   stz TEMP1+1
+   phx
+   jsr spush_0          ; remember!  A/X both destroyed with push and pull!
+   plx
+   cpx #8
+   beq H2DFIN
+   jmp H2DDIV10
+H2DFIN:
+   lda TEMP3
+   clc
+   adc #$30
+   sta TEMP1
+   stz TEMP1+1
+   jsr spush_0   
+   rts
+
+;
+;
 .endif    ; numbers
 ;--------------------------------- CLEAR ------------------------------
 ;

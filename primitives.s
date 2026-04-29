@@ -16,11 +16,6 @@ def_word "abort", "abort_", 0
 def_word "reset", "reset_", 0
     jmp reset
 
-; ( -- ) interpreter 'resolve'
-;def_word "interp", "interp", FLAG_COM
-;okey:
-;    jmp resolve
-
 ;----------------------------------------------------------------------
 ; ( -- ) ae list of data stack
 def_word ".S", "splist", 0       ; changed from %S
@@ -63,7 +58,7 @@ RTPEND:
     jmp next   
     
 ;----------------------------------------------------------------------
-; ( -- ) ae list of return stack
+; ( -- ) list of return stack
 def_word ".R", "rplist", 0       ; changed from %R
     lda RTPTR
     sta TEMP1
@@ -196,17 +191,15 @@ SPCLOOP:
     dex
     bne SPCLOOP
     lda #'|'
-    jsr WRITE_CHAR
-    
+    jsr WRITE_CHAR 
     iny                  ; update TEMP1 again, point at CFA
     tya
     ldx #TEMP1
     jsr addwx
-
-     lda TEMP3           ; instead of printing refs, just advance TEMP1 to TEMP3
-     sta TEMP1
-     lda TEMP3+1
-     sta TEMP1+1
+    lda TEMP3           ; instead of printing refs, just advance TEMP1 to TEMP3
+    sta TEMP1
+    lda TEMP3+1
+    sta TEMP1+1
 
 WORD_CONT:
     lda TEMP2            ; update TEMP2 and TEMP3, advance in linked list
@@ -222,11 +215,9 @@ WORD_CONT:
     ldx #(TEMP3)
     lda #2
     jsr addwx
-
     jmp WORD_LOOP 
-
 WORD_END:
-    clc  ; clean
+    clc              ; clean return
     jmp next
 ;
 ;-------------------------------------- WORDS ---------------------
@@ -326,13 +317,16 @@ def_word ".C", "cdot", 0
     jmp this       ; 'this' includes jsr spush_0 and next
 
 ; (u u ... -- ) print zero term'd, packed string or all of stack as ascii
+;
+;    this doesn't quite work after 'drop' for some reason...
+;
 def_word ".sz", "szdot",0
 SZLOOP:
     lda DSPTR
     cmp #DSEND
     beq SZEND
     jsr spull_0
-    lda TEMP1 + 1
+    lda TEMP1+1
     beq SZEND
     jsr WRITE_CHAR
     lda TEMP1
@@ -490,8 +484,8 @@ def_word "nand", "nand", 0
     lda TEMP2 + 1
     and TEMP1 + 1
     eor #$FF           ; and then second.
-                       ; sta TEMP1 + 1 at 'keeps', then jsr spush_0 and 'next'
-    jmp keeps  ; uncomment if carry could be set
+                       ; sta TEMP1+1 at 'keeps', then jsr spush_0 and 'next'
+    jmp keeps
 
 ;---------------------PLUS and MINUS----------------------------------
 ; ( w1 w2 -- w1+w2 ) 
