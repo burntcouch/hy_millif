@@ -4,12 +4,10 @@
 bload0:
 .byte 6
 .byte "BLtest"
-     bit $00
+     bit #0
      lda #$0D
      jsr WRITE_CHAR
      lda #$0A
-     jsr WRITE_CHAR
-     lda #$0D
      jsr WRITE_CHAR
      lda #'T'
      jsr WRITE_CHAR
@@ -27,12 +25,12 @@ bload0:
 .byte 0, 0
 .byte 7
 .byte "BLtest2"
-     bit $00
+     bit #0
      lda #$0D
      jsr WRITE_CHAR
      lda #$0A
      jsr WRITE_CHAR
-     lda #$0D
+     lda #'!'
      jsr WRITE_CHAR
      lda #'T'
      jsr WRITE_CHAR

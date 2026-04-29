@@ -39,6 +39,14 @@ def_word "rp", "rp", 0                       ; RTPTR pointer addr onto stack
     lda #RTPTR
     bra REGIN
 ;
+def_word "memptr", "memptr", 0
+    lda MEMPTR
+    sta TEMP1
+    lda MEMPTR+1
+;    sta TEMP1+1
+;    jsr spush_0
+    jmp keeps
+;
 ;
 ; removed 4/24/26 - not used, do var/cons differently
 ;
@@ -89,25 +97,29 @@ Fbranch:                          ; [IP] = IP
      jmp next
 ;     
 Fskip:
-     lda INSTPTR                   ; 'skip' (IP += 2)
-     clc
-     adc #2
-     sta INSTPTR
-     bcc FskipEnd
-     inc INSTPTR+1
-FskipEnd:
-     jmp next
+      ldx #INSTPTR  ; 'skip' (IP += 2)
+      lda #2
+      jsr addwx
+      jmp next
 ;
 ;
-;def_word "bbra", "bbra", 0        ; [IP] = IP  next
-;     jmp Fbranch
+def_word "bbra", "bbra", 0        ; [IP] = IP  next
+     jmp Fbranch
 ;
-;def_word "?bra", "qbra", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
-;     jsr spull_0                      ;  above may be backwards, logically?
-;     lda TEMP1
-;     ora TEMP1+1
-;     beq Fskip                       
-;     jmp Fbranch
+def_word "?bra", "qbra", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
+     jsr spull_0                      ;  above may be backwards, logically?
+     lda TEMP1
+     ora TEMP1+1
+     beq Fskip                       
+     jmp Fbranch
+;
+;
+def_word "?nbra", "qnbra", 0      ; POP PSP  0 <> IF skip ELSE [IP] = IP THEN next 
+     jsr spull_0                      ;  above may be backwards, logically?
+     lda TEMP1
+     ora TEMP1+1
+     bne Fskip                       
+     jmp Fbranch
 ;
 ;         Get next byte off INBUF, advance CURBUF
 def_word "in>", "intib", 0
@@ -189,7 +201,7 @@ VCHEAD:
                                  ; code field comes with later proc
 VCLOOP:    
     lda (NXTTOK), y
-    cmp #$20                
+    cmp #$20                    ; copy in length and name
     beq VCMID
 VCCOPY:
     sta (NEXTHEAP), y
@@ -199,76 +211,39 @@ VCMID:
     tya                          ; and update NEXTHEAP  :  'here' incremented by length
     ldx #(NEXTHEAP)
     jsr addwx                   ; 'here' now at CFA
+
+
+    ldx #(VCEND0-VCCODE)        ; calc offset
     ldy #0
-    lda #$24                    ; 'bit $00'
+VCLOOP2:
+    lda VCCODE, y
     sta (NEXTHEAP),y
-    lda #0
     iny
-    sta (NEXTHEAP),y
-    lda #$A9                    ; 'lda #<NEXTHEAP+13
-    iny
-    sta (NEXTHEAP),y
+    dex
+    bne VCLOOP2
+    phy                        ; save for later
     lda NEXTHEAP+1
-    sta TEMP1+1  
+    sta TEMP1+1
     lda NEXTHEAP
     clc
-    adc #15
-    sta TEMP1                  ; #<NEXTHEAP+13
-    bcc VCMID0
-    inc TEMP1+1                ; #>NEXTHEAP+13
-VCMID0:
+    adc #15                     ; calc addresses for indirect data
+    sta TEMP1                   ; read.
+    bcc VCSKIP00
+    inc TEMP1+1      
+VCSKIP00:                      ; update addresses for lda's
+    ldy #3                     ; <VCDATA
     lda TEMP1
-    iny
     sta (NEXTHEAP),y
-    lda #$85                    ; 'sta zp'
-    iny
-    sta (NEXTHEAP),y
-    lda #TEMP1
-    iny
-    sta (NEXTHEAP),y
-    lda #$A9                    ; 'lda #>NEXTHEAP+13
-    iny
-    sta (NEXTHEAP),y
+    ldy #7                     ; >VCDATA
     lda TEMP1+1
-    iny
-    sta (NEXTHEAP),y    
-    lda #$85                    ; 'sta zp'
-    iny
     sta (NEXTHEAP),y
-    lda #TEMP1+1
-    iny
-    sta (NEXTHEAP),y
-    lda #$20                    ; 'jsr absolute'
-    iny
-    sta (NEXTHEAP),y
-    lda #<spush_0
-    iny
-    sta (NEXTHEAP),y
-    lda #>spush_0
-    iny
-    sta (NEXTHEAP),y
-    lda #$80                     ; 'bra 2'
-    iny
-    sta (NEXTHEAP),y
-    lda #2
-    iny
-    sta (NEXTHEAP),y 
     lda #0
-    iny
-    sta (NEXTHEAP),y            ; set at zero
-    iny
-    sta (NEXTHEAP),y
-    lda #$4C                    ; 'jmp next'
+    ldy #15
+    sta (NEXTHEAP),y          ; store zero in data word
     iny
     sta (NEXTHEAP),y
-    lda #<next
-    iny
-    sta (NEXTHEAP),y
-    lda #>next
-    iny
-    sta (NEXTHEAP),y
-    iny                        ; to update
-    tya                        ; update NEXTHEAP
+    
+    pla                        ; to update
     ldx #NEXTHEAP
     jsr addwx
 VCFINISH:    
@@ -279,17 +254,14 @@ VCFINISH:
                                 
     jmp next
 ;
-;    VCCODE - not used yet here, seeing the payoff 
-;    (probably faster and easier to follow)
-;    pre-built code to copy in (see cons below)
+;    VCCODE - 'dovar' - copied into a var word ( 'DOES>' )
 ;
-;   (saves about 20 bytes in cons)
-;   
-VCCODE:
-   bit $00
-   lda #<VCDATA               ; <NEXTHEAP+13   (offset +3) 
+;
+VCCODE:         ; NEXTHEAP ('here') should start here
+   bit #00
+   lda #<VCDATA               ; <NEXTHEAP+15   (at 'here' +3) 
    sta TEMP1
-   lda #>VCDATA               ; >NEXTHEAP+13   (offset +7)
+   lda #>VCDATA               ; >NEXTHEAP+15   (at 'here' +7)
    sta TEMP1+1
    jsr spush_0
    bra VCEND                  ; bra 2
@@ -331,8 +303,8 @@ CCMID:
     tya                          ; and update NEXTHEAP  :  'here' incremented by length
     ldx #(NEXTHEAP)
     jsr addwx                   ; 'here' now at CFA
-
-    ldx #(CCEND0-CCCODE)
+                                ; copy in code from CCCODE ('docon')
+    ldx #(CCEND0-CCCODE)        ; calc offset
     ldy #0
 CCLOOP:
     lda CCCODE, y
@@ -343,25 +315,24 @@ CCLOOP:
     phy
     lda NEXTHEAP+1
     sta TEMP1+1
-    lda NEXTHEAP
+    lda NEXTHEAP    
     clc
-    adc #17
-    sta TEMP1
+    adc #17                     ; calc addresses for indirect data
+    sta TEMP1                   ; read.
     bcc CCSKIP00
     inc TEMP1+1
 CCSKIP00:
-    ldy #3
+    ldy #3                     ; offset to lda CCDATA
     lda TEMP1
     sta (NEXTHEAP),y
     iny
     lda TEMP1+1
     sta (NEXTHEAP),y
     inc TEMP1
-    lda TEMP1
     bne CCSKIP01
     inc TEMP1+1
 CCSKIP01:
-    ldy #8
+    ldy #8                     ; offset to lda CCDATA+1
     lda TEMP1
     sta (NEXTHEAP),y
     iny 
@@ -373,7 +344,7 @@ CCSKIP01:
     lda TEMP8+1                ; store constant val MSB
     iny
     sta (NEXTHEAP),y
-
+             ; pull back offset from above
     pla                        ; update NEXTHEAP
     ldx #NEXTHEAP
     jsr addwx
@@ -388,8 +359,9 @@ CCFINISH:
 ;   cons copies this in and 'customizes it' by
 ;   plugging in corrected address for CCDATA
 ;
+;  'DOCONS'
 CCCODE:
-    bit $00
+    bit #00
     lda CCDATA                       
     sta TEMP1                       
     lda CCDATA+1                 
@@ -412,10 +384,9 @@ ONEHEX:
      lda #1
 DOWITHONE:
      sta TEMP1
-     lda #0
-     sta TEMP1+1
-     jsr spush_0
-     jmp next     
+     stz TEMP1+1
+;     jsr spush_0
+     jmp this    
 
 ; ( -- n ) numeral 2
 def_word "$2", "twohex", 0
@@ -486,19 +457,16 @@ def_word "-1", "negone", 0
      lda #$FF
      sta TEMP1
 DOWITHNEG:
-     sta TEMP1+1
-;     jsr spush_0
-     jmp this
+    ; sta TEMP1+1
+     jmp keeps
 
 ; ( -- n ) numeral 0
 def_word "$0", "zerohex", 0
      jmp DOITZERO
 def_word "0", "zero", 0
 DOITZERO:
-     lda #0
-     sta TEMP1
-     sta TEMP1+1
-;     jsr spush_0
+     stz TEMP1
+     stz TEMP1+1
      jmp this
      
 ; ( -- n ) numeral -2
@@ -860,14 +828,77 @@ def_word "2over", "over2", 0
    jsr spush_1  ;  'b' again
    jmp next
 ;
+def_word "pick", "xpick", 0
+   jsr spull_0
+   lda TEMP1
+   asl
+   clc
+   adc DSPTR
+   sta TEMP8
+   cmp #DSEND           ; boundary check
+   bcs PICKPTRERR
+   sta TEMP8
+   lda DSPTR+1
+   sta TEMP8+1
+   ldy #0
+   lda (TEMP8),y
+   sta TEMP1
+   iny
+   lda (TEMP8),y
+   sta TEMP1+1
+   jsr spush_0
+   jmp next
+PICKPTRERR:
+    lda #ERR_SPTR
+    sta ERRFLAG
+    jmp errrtn
+;
+def_word "snip", "snip", 0
+   lda DSPTR
+   cmp #DSEND
+   beq SNIPERR
+   lda DSPTR+1
+   sta TEMP2+1
+   sta TEMP1+1
+   lda #DSEND
+   sta TEMP2
+   lda #DSEND 
+   sta TEMP1
+SNIPLOOP:
+   lda TEMP1
+   sec
+   sbc #2
+   sta TEMP1
+   ldy #0
+   lda (TEMP1),y
+   sta (TEMP2),y
+   iny
+   lda (TEMP1),y
+   sta (TEMP2),y
+   lda TEMP1+1
+   sta TEMP2+1
+   lda TEMP1
+   sta TEMP2
+   cmp #DSEND
+   beq SNIPEND
+   bra SNIPLOOP   
+SNIPEND:
+   ldx #DSPTR
+   lda #2
+   jsr addwx
+   jmp next
+SNIPERR:
+    lda #ERR_SPTR
+    sta ERRFLAG
+    jmp errrtn
+;
+;-------------------------AUTOLOAD and CLOAD----------------------   
 CLOADMSG:
    .byte "cload>"
    .byte 0
 BLOADMSG:
    .byte "bload:"
    .byte $0D, $0A, 0
-;
-;-------------------------AUTOLOAD and CLOAD----------------------
 ;
 ; ( -- )     autoload a list of scripts
 def_word "autoload", "autoload", 0
@@ -995,6 +1026,9 @@ BLZEROSKIP:
     iny
     bra BLZEROSKIP
 BLNSK1:
+    tya
+    ldx #TEMP1
+    jsr addwx   
     ldy #0                                 
 BLNLOOP:    
     lda (TEMP1), y               
@@ -1028,10 +1062,34 @@ BLFINISH:
     sta LASTHEAP                ; bring back BACKHEAP to LASTHEAP
     lda BACKHEAP + 1 
     sta LASTHEAP + 1
-    jsr spush_0                 ; push next address?
+    jsr BLTESTEND
+    bcs BLENDEND
+    jmp BLAGAIN                  ; next word
+;    jsr spush_0                 ; push next/last address?
 BLENDEND:
     jmp next
 
+BLTESTEND:
+    phy
+    ldy #0
+    lda (TEMP1), y
+    cmp #'E'
+    bne BLNOEND
+    iny
+    lda (TEMP1), y
+    cmp #'N'
+    bne BLNOEND
+    iny
+    lda (TEMP1), y
+    cmp #'D'
+    bne BLNOEND
+    sec 
+    bcs BLTEND
+BLNOEND:
+    clc
+BLTEND:
+    ply
+    rts    
 ;
 ;
 ;
@@ -1236,6 +1294,14 @@ div0err:                      ; pop jsr off stack, throw error
     sta ERRFLAG
     jmp errrtn    
 ;
+; ( hex -- d1 d2 d3 d4 d5 )
+def_word "dec", "xdec", 0  
+    jsr spull_0
+    lda TEMP1
+    ldy TEMP1+1
+    jsr HEX2DEC
+    jmp next
+;
 ;------------------------------MEMORY OPERATIONS----------------------------
 ;
 ; (as ae ad -- )    copy from $as thru $ae to $ad
@@ -1257,7 +1323,19 @@ MEMCPYDOIT:
     stz supprint
 MEMCPYEND:
     jmp next
-
+;
+;                   free memory between BACKHEAP and MEMPTR
+def_word "free", "free", 0
+    lda MEMLAST
+    sec
+    sbc NEXTHEAP
+    sta TEMP1
+    lda MEMLAST+1
+    sbc NEXTHEAP+1
+    sta TEMP1+1    
+    jsr spush_0
+    jmp next
+;
 ; (daddr n -- ) start disassembly from daddr, do it
 ; $F600 is entry point --A+Y for starting address, C=1 for multiple opcodes, X for # of codes
 def_word "disasm", "disasm", 0
@@ -1294,7 +1372,80 @@ def_word "syscall", "syscall", 0
     jmp SYSCALL
     jmp next
 ;
-;  "wfind" was here
+;
+; ( bytes type -- staddr )
+def_word "malloc", "malloc", 0
+    jsr spull_1       ; type ( word ($00), char ($01), words ($02), bytes ($03), sz ($04) ..)
+    jsr spull_0       ; # bytes   
+MALLOC:
+    ;  TEMP1 and TEMP2 should have bytes / record type if 'jsr MALLOC'
+    lda MEMLAST
+    sec
+    sbc #3
+    sta MEMLAST
+    bcs MALSK00
+    dec MEMLAST+1
+MALSK00:
+    sec
+    sbc TEMP1
+    sta MEMLAST
+    lda MEMLAST+1
+    sbc TEMP1+1
+    sta MEMLAST+1
+                        ;MEMLAST updated to start of new record
+    lda MEMLAST
+    sta TEMP3
+    lda MEMLAST+1
+    sta TEMP3+1         ; use TEMP3 to walk through clearing of maemory
+    ldy #0
+    lda TEMP2            ; write type first
+    sta (TEMP3),y
+    iny
+    lda TEMP1            ; LSB length
+    sta (TEMP3),y
+    iny
+    lda TEMP1+1          ; MSB length
+    sta (TEMP3),y
+    ldx #TEMP3
+    lda #3
+    jsr addwx            ; increment TEMP3 by 3
+MALLOOP:
+    lda #0
+    ldy #0
+    sta (TEMP3),y
+    dec TEMP1
+    bne MALSK02    
+    lda TEMP1+1
+    beq MALCONT
+    lda TEMP1
+    cmp #$FF
+    bne MALSK02        ; TRY ALL THIS, DONE FOR THIS MORNING
+    dec TEMP1+1
+MALSK02:
+    inc TEMP3
+    bne MALSK01
+    inc TEMP3+1
+MALSK01:    
+    bra MALLOOP
+MALCONT:                   ; now store MEMLAST at MEMPTR
+    ldy #0
+    lda MEMLAST
+    sta (MEMPTR),y
+    iny
+    lda MEMLAST+1
+    sta (MEMPTR),y
+    lda MEMPTR+1
+    sta TEMP1+1
+    lda MEMPTR           
+    sta TEMP1             ; copy to TEMP1 before incrementing
+    sec                   ; MEMPTR + 2
+    sbc #2
+    sta MEMPTR
+    bcs MALLOCEND
+    dec MEMPTR+1
+MALLOCEND:
+    jsr spush_0          ; push ptr address to new record on stack
+    jmp next
 ;
 ;----------------------------------------------------------------------------
 HYWORDS_END:

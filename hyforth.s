@@ -217,8 +217,6 @@ HYWORDS := 1      ; add in additional hardcoded words / logic
 
 ANSIOK := 1         ; add ANSI screen stuff
 
-;LUTABLE := 1     ; CFA->length/flag byte lookup table
-
 ;---------------------------------------------------------------------
 ;              for PGS hyforth stuff
 ;
@@ -260,7 +258,7 @@ RTEND = $FE
 
 ; malloc stack
 ; moves backwards
-MMEND = $FE
+MEMEND = $01FE
 
 ;----------------------   BIOS calls -----------------------------------
 WRITE_CHAR = $F803
@@ -276,7 +274,6 @@ ZP_XAM = $31       ; can we see address left by DISASM here?
 INROM = $A000
 ALTBUF = $6000
 ALTBUF_end = $6FFF
-LENLU = $7FFE
 MEMTOP = $7FFE
 
 ;----------------------------------------------------------------------
@@ -310,13 +307,12 @@ TEMP0:                        ;  DUMPREG         $C8
    .res 2
 TEMP8:                        ;  Hstring macro   $CA
    .res 2
-TEMP9:                        ;                  $CC
+TEMP9:                        ;   Imm            $CC
    .res 2
-TEMP10:                       ;                  $CE
+MEMPTR:                       ;   malloc         $CE
    .res 2
-LUPTR:           ;PTR for length/flag lookup table
-MEMPTR:                
-   .res 2                      ;                 $D0
+MEMLAST:                
+   .res 2                      ;  malloc         $D0
 TIB:
    .res 2          ; pointer to input buffer     $D2
 TIBEND:
@@ -392,6 +388,9 @@ DS:                          ; data stack (S)
 RT:                          ; return stack (R)
       .res 126
       .res 2
+MEMSTK:                      ; memory manager
+      .res 510
+      .res 2
 ;
 ;
 .segment "ROM"              ; regular core
@@ -464,6 +463,15 @@ reset:
     sty DSPTR + 1
     ldy #>RT    
     sty RTPTR + 1 
+
+    ldy #>(MEMSTK+MEMEND)       ; initialize memory manager area
+    sty MEMPTR + 1
+    ldy #<(MEMSTK+MEMEND)
+    sty MEMPTR
+    ldy #<MEMTOP
+    sty MEMLAST
+    ldy #>MEMTOP
+    sty MEMLAST+1
     
     lda #1                       ; DEBUG OFF by default
     sta DFLAG 
@@ -739,19 +747,18 @@ TOKENEND:
 ;.endif
     clc     ; clean - setup token  
     rts
-
-;---------------------------------------------------------------------
-;          decwx, heap moves (comma/wcomma?  why?)
 ;
-; decrement a word in page zero. offset by X
-decwx:
-    lda 0, x
-    bne decwx_end
-    dec 1, x
-decwx_end:
-    dec 0, x
-    rts
-
+;--------------------UTILITIES----------------------------------------
+;    A whole bunch of helper functions;
+;  wcomma / comma increment WORKREG (or another reg) and NEXTHEAP ('here') 
+;  while copying into NEXTHEAP, uses incwx.
+;
+;  copyinto / copyfrom copy AND increment/decrement
+;  spush/rpush - pushes something onto stacks indexed on ZP by Y (increment using addwx/incwx)
+;  spull/rpull - pulls from stacks, copies into ZP indexed by Y (decrement builtin)
+;
+;  addwx/incwx/decwx do some of the incrementing duties, alth
+;
 ;---------------------------------------------------------------------
 ;
 ;   COMMA allocates memory at top of heap for 'other stuff'
@@ -763,7 +770,7 @@ wcomma:
     ldy #WORKREG                  ; copy addr at WORKREG, change addr fld NEXTHEAP points to
 comma: 
     ldx #NEXTHEAP                 ; Y has source of address, change addr fld NEXTHEAP points to
-    ; fall through - copyinto, then rts after second incwx
+    ; FALL THROUGH - copyinto, then rts after second incwx
 ;---------------------------------------------------------------------
 ; from a page zero address indexed by Y
 ; into a page zero indirect address indexed by X
@@ -788,7 +795,7 @@ spush_1:
     jmp spush        
 spush_0:             ; push TEMP1 to stack, probably top of stack
     ldy #TEMP1
-     ; fall through
+     ; FALL THROUGH
 ;---------------------------------------------------------------------
 ; PUSH a cell 
 ; from a page zero address indexed by Y
@@ -804,6 +811,8 @@ rpush:
     lda RTPTR               ; ditto
     cmp #<RT                ; ditto
     beq ptrerr_r
+    
+    ; FALL THROUGH
 ;---------------------------------------------------------------------
 ; classic stack backwards
 push:
@@ -840,6 +849,8 @@ spull_1:                    ; pull TEMP2 from top
 spull_0:
     ldy #TEMP1             ; pull TEMP1 from top of DS
 ;
+;  FALL THROUGH
+;
 ; PULL a cell 
 ; from a page zero indirect address indexed by X
 ; into a page zero address indexed by y
@@ -848,14 +859,15 @@ spull:
     ldx #DSPTR
     lda DSPTR         ; pointer bounds checking
     cmp #DSEND        ; ditto
-    beq ptrerr_s        ; ditto
-    jmp pull
-rpull:                ; !!! RPULL requires explicit loading of dest to Y !!!
+    beq ptrerr_s      ; ditto
+    jmp pull          ; pull includes rts from incwx so....
+rpull:                ;
     ldx #RTPTR
     lda RTPTR        ; pointer bounds checking
     cmp #RTEND        ; ditto
     beq ptrerr_r        ; ditto
-
+;
+;  FALL THROUGH
 ;---------------------------------------------------------------------
 ;
 ; from a page zero indirect address indexed by X
@@ -864,40 +876,109 @@ pull:
 copyfrom:
     lda (0, x)
     sta 0, y
-    jsr incwx
+    jsr incwx      ; NOTE:  not a jmp, returns here.
     lda (0, x)
     sta 1, y
-  ; fall through to increment, then return
+ ;
+ ;  FALL THROUGH
 ;---------------------------------------------------------------------
 ; increment a word in page zero. offset by X
+;
+;   Usage: ldx #<pointer name> and then jsr incwx/addwx
+;
+;   THESE functions are SOLELY intended to increment/decrement
+;   zeropage pointers, and nothing else.  Offsets indexed by
+;   X are INTO the zeropage space, not relative to a specific
+;   pointer location.
+;
 incwx:
     lda #01
 ;---------------------------------------------------------------------
 ; add a byte in A to a word in page zero. offset by X
 addwx:
-    clc                  ; this is absolute to a ZP address, remember, so...
-    adc 0, x             ; note: if x offsets to a pointer, it increments it!
+    clc               
+    adc 0, x          
     sta 0, x
     bcc addwx_end
     inc 1, x
-    clc ; keep carry clean
+    clc      ; keep carry clean.  
+             ; our convention is that functions SET the carry for positive results,
+             ; clear carry for negative or neutral ones.
 addwx_end:
     rts
 
-SWITCH_TO_ALT:
-    lda #<ALTBUF
-    sta TIB
-    lda #>ALTBUF
-    sta TIB+1
-    lda #<ALTBUF_end
-    sta TIBEND
-    lda #>ALTBUF_end
-    sta TIBEND+1
-    jmp abort
+;---------------------------------------------------------------------
+;          decwx, heap moves 
+; decrement a word in page zero. offset by X
+;
+;   Usage: ldx #<pointer name> and then jsr decwx
+;
+;   THESE functions are SOLELY intended to increment/decrement
+;   zeropage pointers, and nothing else.  Offsets indexed by
+;   X are INTO the zeropage space, not relative to a specific
+;   pointer location.
+;
+decwx:
+    lda 0, x
+    bne decwx_end
+    dec 1, x
+decwx_end:
+    dec 0, x
+    rts    
+;
+;   all return C = 1 if true
+;
+NOTOS_ZP:      ; address is in A, true if ZP > ZPSTART
+    cmp #ZPSTART
+    rts
     
-
-
+OVER_MEM:      ; MSB, LSB in A,Y
+    cmp #>MEMTOP
+    beq OVMSKIP
+    bra OVMEND
+OVMSKIP:
+    tya
+    cmp #<MEMTOP
+OVMEND:    
+    rts
     
+DS_EMPTY:   
+    lda DSPTR
+    sec
+    sbc #DSEND
+    rts
+
+RT_EMPTY:    
+    lda RTPTR
+    sec
+    sbc #RTEND
+    rts
+
+DS_FULL:   
+    lda #<DS
+    sec
+    sbc DSPTR
+    rts
+    
+RT_FULL:
+    lda #<RT
+    sec
+    sbc RTPTR
+    rts
+    
+;
+;  switch to ALTBUF from standard TIB
+;
+;SWITCH_TO_ALT:
+;    lda #<ALTBUF
+;    sta TIB
+;    lda #>ALTBUF
+;    sta TIB+1
+;    lda #<ALTBUF_end
+;    sta TIBEND
+;    lda #>ALTBUF_end
+;    sta TIBEND+1
+;    jmp abort
     
     
 ENGINEEND:
@@ -947,7 +1028,7 @@ ROMCODEEND:                         ; end of all code
 ;-----------------------------------------------------------------------
 COPYSTART:                    ; marks beginning of copy in ROM space
 .segment "CODE"                
-.org $0600
+.org $0800
 RAMSTART:
      jmp main                   ; MAIN program start
                                 ; should be at $A000 now
@@ -1012,7 +1093,7 @@ copys:                      ; copy from cell at y (zp) to TEMP1
     sta TEMP1
     lda 1, y
 keeps:                      ; saves bytes since have to get here anyway
-    sta TEMP1 + 1
+    sta TEMP1+1
 this:                       ; same as above
     jsr spush_0             ; then push back on stack
     jmp next
@@ -1033,6 +1114,17 @@ FETCH_WX:                    ; set X from somewhere else
 ;-----------------------IMMEDIATE, '[', ']', ','-----------------------
 def_word "I", "Imm", 0   
 wimm:                        ; jmp here if proccessing a compiled
+ ;   lda LASTHEAP
+ ;   sta TEMP3
+ ;   lda LASTHEAP+1
+ ;   sta TEMP3+1
+ ;   ldx #TEMP3            ; NOTE:  if problems down the road, copy 'here' to a TEMP first....
+ ;   lda #2
+ ;   jsr addwx                ; update 'here' to point at lengthbyte 
+ ;   ldy #0
+ ;   lda #$80                 ; sets immediate flag
+ ;   ora (TEMP3),y
+                      ; jmp here if proccessing a compiled
     lda LASTHEAP+1           ;   word that needs to run 'immediate'.
     sta TEMP9+1
     lda LASTHEAP             ; get addr of 'last' compiled word, copy to TEMP4, add 2
@@ -1040,18 +1132,19 @@ wimm:                        ; jmp here if proccessing a compiled
     adc #2                   ; ..to find where length byte is...
     sta TEMP9                  
     bcc IMMSKIP
-    inc TEMP4+1
+    inc TEMP9+1
 IMMSKIP:
     ldy #0
     lda (TEMP9),y
     ora #$80                 ; ...set bit 7 and store
     sta (TEMP9),y
     jmp next
-
+ 
+;
 def_word "[", "leftbrack", FLAG_IMM       ; switch to 'interpret'
     stz STATUS
     jmp next
-
+;
 def_word "]", "rtbrack", 0               ; switch back to 'compile'
     lda #1
     sta STATUS
@@ -1069,13 +1162,9 @@ def_word ",", "xcomma", 0                ; pull data from top of stack, store at
     iny
     lda TEMP1+1
     sta (NEXTHEAP),y
-    lda NEXTHEAP                         ; here += 2
-    clc
-    adc #2
-    sta NEXTHEAP
-    bcc COMMASKIP
-    inc NEXTHEAP+1
-COMMASKIP:
+    ldx #NEXTHEAP                        ; here += 2
+    lda #2
+    jsr addwx
     jmp next
     
 ;--------------------------------------------SEMIS-----------------
@@ -1158,14 +1247,13 @@ next:                        ;    go on to next word; IP is pointing at next ent
     ldy #WORKREG
     jsr copyfrom             ; W = [IP], IP += 2  ( and either ENTER or EXECUTE )
 
-                           ; FIX, this sucks in many ways...bit 6 of length byte should be set for compiled
 pick:                      ;                COMPILED OR PRIMITIVE?
                            ; let's figure out if STATUS+1 still has length btye for previous word...
                            ; if so, we can look at bit 6 to do 'pick' instead of using 'compare pages'
                            ;
 .ifdef DEBUG
      lda DFLAG
-     bne PRINTWSKIP        ; print W and etc if DEBUG
+     bne PRINTWSKIP        ; print W and [W] etc if DEBUG
      WSEQ_raw WDISP
      lda WORKREG+1
      jsr WRITE_BYTE
@@ -1177,23 +1265,16 @@ pick:                      ;                COMPILED OR PRIMITIVE?
      jsr WRITE_BYTE
 PRINTWSKIP:
 .endif
-                 ; .. and stick with the good old-fashioned way
+                 ; .. use old-fashioned way AND new tricks
+                 ;
      lda WORKREG + 1       ; compare pages (MSBs)
      cmp #>ends + 1        ;  !! Compiled must be higher in memory than hardcoded !! (see below)
      bmi jump              ; jump over nest if native code
-     ldy #0
-     lda (WORKREG),y      ; see if WORKREG is pointing at 'bit 00'
-     cmp #$24
-     bne nest             ; nope, tis compiled fer sure
-     iny
+     ldy #1                ; ldy #0 if check extra byte
      lda (WORKREG),y
-     cmp #0
      beq jump               ; yep, jump to native execution
 
 nest:                     ; ENTER in classic Forth lingo   ( COMPILED )
-
-    jsr DUMPREG
-
     ldy #INSTPTR
     jsr rpush                   ; RTPTR -=2, [RTPTR] = [IP] 
     lda WORKREG                 ; W = IP
