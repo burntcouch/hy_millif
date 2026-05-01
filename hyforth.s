@@ -217,16 +217,23 @@ HYWORDS := 1      ; add in additional hardcoded words / logic
 
 ANSIOK := 1         ; add ANSI screen stuff
 
+;TXT2STACK := 1     ; use old TXTGET instead of new
+
 ;---------------------------------------------------------------------
 ;              for PGS hyforth stuff
 ;
 ; error codes
 ;
-ERR_RPTR := $01
-ERR_SPTR := $02
-ERR_DIV0 := $03
-ERR_MEM := $04
-ERR_UKW := $05
+ERR_RPTR := $01    ; return stack pointer error
+ERR_SPTR := $02    ; data stack pointer error
+ERR_DIV0 := $03    ; divide by zero
+ERR_MEM := $04     ; memory not-avail
+ERR_UKW := $05     ; unknown word
+ERR_SEC := $06     ; security error, ie dangerous address write
+ERR_SYS := $07     ; return from system call error
+  ; warnings
+WRN_SEC := $86     ; security
+WRN_MEM := $84     ; memory alloc
 ;
 ;---------------------------------------------------------------------
 ;                CHARACTER CONSTANTS
@@ -274,7 +281,7 @@ ZP_XAM = $31       ; can we see address left by DISASM here?
 INROM = $A000
 ALTBUF = $6000
 ALTBUF_end = $6FFF
-MEMTOP = $7FFE
+MEMTOP = $8000            ; malloc allocates DOWN from MEMTOP
 
 ;----------------------------------------------------------------------
 ;       Look closely at hyforth.cfg and the output of ca65/ld65 after
@@ -417,7 +424,7 @@ WATDISP:
     .byte "  [W]="
     .byte 0
 SYSCALL:
-    jsr SCDUMMY        ; store into SCDUMMY+1, +2 to customize jump
+    jsr SCDUMMY        ; store into SYSCALL+1, +2 to customize jump
     txa                ; returned stuff in X
     beq SCSKIP         ; if returns zero, don't do anything else
     sta TEMP1          ; otherwise...
@@ -434,7 +441,7 @@ cold:
 
 warm:
 ; link list of headers
-    lda #>h_exit
+    lda #>h_exit               ; initialize HEAP pointers
     sta LASTHEAP + 1
     lda #<h_exit
     sta LASTHEAP
@@ -444,6 +451,16 @@ warm:
     sta NEXTHEAP + 1
     stz NEXTHEAP
     stz ERRFLAG                ; clear ERROR flag
+    
+
+    ldy #>(MEMSTK+MEMEND)       ; initialize memory manager area
+    sty MEMPTR + 1
+    ldy #<(MEMSTK+MEMEND)
+    sty MEMPTR
+    ldy #<MEMTOP
+    sty MEMLAST
+    ldy #>MEMTOP
+    sty MEMLAST+1    
  
 ;---------------------------------------------------------------------
 ; various reinitialization points
@@ -463,16 +480,7 @@ reset:
     sty DSPTR + 1
     ldy #>RT    
     sty RTPTR + 1 
-
-    ldy #>(MEMSTK+MEMEND)       ; initialize memory manager area
-    sty MEMPTR + 1
-    ldy #<(MEMSTK+MEMEND)
-    sty MEMPTR
-    ldy #<MEMTOP
-    sty MEMLAST
-    ldy #>MEMTOP
-    sty MEMLAST+1
-    
+ 
     lda #1                       ; DEBUG OFF by default
     sta DFLAG 
     stz ALFLAG                   ; autoload flag OFF
@@ -717,16 +725,11 @@ TOKENDONE:  ; find size and store it;
       bra TOKCLR0
 .endif  ; 'numbers'
 CHKFERTXT:
-      jsr TEXTGET         ; check to see if string entry q^...^ - Y has position of first ^
-      bcs TOKENEND
-      tya                 
-      clc
-      adc TEMP3           ; add the length....
-      adc #3              ; and the xtras
-      tax
+      jsr TEXTGET         ; returns length +4 in X
+      bcs TOKENEND 
       ldy #0
       lda #$20
-      bra TOKCLR
+      jmp TOKCLR
 TOKCLR0:
       ldy #0
       lda (NXTTOK),y     ; load length again
@@ -737,7 +740,8 @@ TOKCLR:
       sta (NXTTOK),y
       iny
       dex
-      bne TOKCLR     
+      bne TOKCLR
+TOKNEXT:      
       jmp token               ; and use 'token' to rebuild input buffer w/o converted #
 
 
@@ -926,61 +930,8 @@ decwx_end:
     dec 0, x
     rts    
 ;
-;   all return C = 1 if true
 ;
-NOTOS_ZP:      ; address is in A, true if ZP > ZPSTART
-    cmp #ZPSTART
-    rts
-    
-OVER_MEM:      ; MSB, LSB in A,Y
-    cmp #>MEMTOP
-    beq OVMSKIP
-    bra OVMEND
-OVMSKIP:
-    tya
-    cmp #<MEMTOP
-OVMEND:    
-    rts
-    
-DS_EMPTY:   
-    lda DSPTR
-    sec
-    sbc #DSEND
-    rts
-
-RT_EMPTY:    
-    lda RTPTR
-    sec
-    sbc #RTEND
-    rts
-
-DS_FULL:   
-    lda #<DS
-    sec
-    sbc DSPTR
-    rts
-    
-RT_FULL:
-    lda #<RT
-    sec
-    sbc RTPTR
-    rts
-    
-;
-;  switch to ALTBUF from standard TIB
-;
-;SWITCH_TO_ALT:
-;    lda #<ALTBUF
-;    sta TIB
-;    lda #>ALTBUF
-;    sta TIB+1
-;    lda #<ALTBUF_end
-;    sta TIBEND
-;    lda #>ALTBUF_end
-;    sta TIBEND+1
-;    jmp abort
-    
-    
+;   
 ENGINEEND:
 ;                           END OF CORE ENGINE
 ;----------------------------------------------------------------------
@@ -1001,22 +952,7 @@ UPPER_END:
 .include "hyf_rom.s"
 ;
 ROMCODEEND:                         ; end of all code
-;-----------------------------------------------------------------------
-;                            TRAINING DATA
-;
-; include training data
-    .res 8
-    .byte "FTRAIN"
-    .byte 0,0
-.include "ftrain.s"
-;
-;                            BINARY LOAD
-;
-    .res 9
-    .byte "BLOAD"
-    .byte 0,0
-.include "bload.s"
-;
+
 ;  end of hyforth.s
 ;
 ;-----------------------------------------------------------------------
@@ -1294,6 +1230,25 @@ ends:                            ; end marker of hardcoded primitives
 ;
 ;-----------------------------------------------------------------------
 ;
+;
+
+;-----------------------------------------------------------------------
+;                            TRAINING DATA
+;
+; include training data
+
+.segment "LIB"
+.org $C000
+    .byte "FTRAIN"
+    .byte 0,0
+.include "ftrain.s"
+;
+;                            BINARY LOAD
+;
+    .res 16
+    .byte "BLOAD"
+    .byte 0,0
+.include "bload.s"
 ;
 
     

@@ -27,12 +27,14 @@ ERREND:
 ;  
 err_jumptable:
     .res 2
-    ERR_entry RPTR_ERR    ; RT stack full  - error 1
-    ERR_entry SPTR_ERR    ; RT stack full  - error 2
-    ERR_entry DIV_ERR    ; divide by zero - error 3
-    ERR_entry OOM_ERR    ; out of memory  - error 4
-    ERR_entry UKW_ERR    ; no existing word - error 5
-LASTERR = 5
+    ERR_entry RPTR_ERR    ; RT stack full/empty  - error $01
+    ERR_entry SPTR_ERR    ; DS stack full/empty  - error $02
+    ERR_entry DIV_ERR    ; divide by zero - error $03
+    ERR_entry OOM_ERR    ; out of memory  - error $04
+    ERR_entry UKW_ERR    ; no existing word - error $05
+    ERR_entry SEC_ERR    ; writing to dangerous RAM areas - error $06
+    ERR_entry SYS_ERR    ; error on return from SYSCALL - error $07
+LASTERR = 7
 ;
 ;  error messages
 RPTR_ERR:
@@ -50,6 +52,12 @@ OOM_ERR:
 UKW_ERR:
     .byte " !UNK WORD!"
     .byte 0
+SEC_ERR:
+    .byte " !SECURITY!"
+    .byte 0
+SYS_ERR:
+    .byte " !SYS ERR!"
+    .byte 0
 ;
 ;  used by DISASM, may be handy elsewhere eventually
 ;
@@ -59,7 +67,7 @@ WRITE_HSTRING:
                 sty  TEMP8+1
                 lda  (TEMP8)       ; Length of HString
                 tax
-                ldy  0
+                ldy  #0
 @write_loop:
                 iny
                 lda  (TEMP8),Y
@@ -171,8 +179,107 @@ galois32o:
 	sta RSEED+0
 	rts
 ;-------------------------------------------------------------------
-;              get delimited text from INBUF, pack and push on stack
+;              get delimited text from INBUF, store in string
 ;
+
+.ifndef TXT2STACK
+;
+;  uses TEMP1, TEMP2, TEMP3, TEMP5, TEMP6, X, Y
+;
+TEXTGET:
+    stz TEMP1+1          ; will store length here
+    lda #$04
+    sta TEMP2            ; record type is 'sz'
+    stz TEMP2+1
+    stz TEMP6            ; to save y for later copy
+    ldy #1               ; skip len of first token
+TX2SKSPC:
+    lda (NXTTOK),y
+    cmp #$20             ; skip leading spaces
+    bne TX2SK00
+    iny
+    bra TX2SKSPC
+TX2SK00:
+    cmp #'q'
+    bne TX2NOGOOD
+    iny
+    lda (NXTTOK),y
+    cmp #'^'
+    bne TX2NOGOOD   
+    iny
+    sty TEMP6             ; temp6 stores pos of first char
+TX2SCAN:
+    lda (NXTTOK),y         ; find delimiting '^' 
+    iny
+    cmp #'^'
+    beq TX2FOUND
+    tya
+    clc
+    adc NXTTOK
+    cmp #MAXSTR
+    bcs TX2NOGOOD
+    bra TX2SCAN
+TX2FOUND:
+    dey
+    sty TEMP5        ; temp5 pos+1 last letter
+    tya
+    sec
+    sbc TEMP6       
+    sta TEMP1        ; and this should be the length
+    inc TEMP1        ; and add one for zero at end
+    
+    jsr MALLOC      ; TEMP1 now has address on mem stack
+    
+    ldy #0
+    lda (TEMP1),y
+    sta TEMP2
+    iny
+    lda (TEMP1),y
+    sta TEMP2+1    ; address in memory area
+
+    ; now for math.  NXTTOK ptr needs to be ref'd with same y
+    ; as TEMP2, so we need to match them up...and we are hitting
+    ; the record at +3, so....TEMP6 is start
+    lda TEMP2
+    sec
+    sbc TEMP6
+    bcs TX2SK01
+    dec TEMP2+1
+TX2SK01:
+    clc
+    adc #3
+    bcc TX2SK02
+    inc TEMP2+1
+TX2SK02:    
+    ldy TEMP6
+TX2CPYLOOP:
+    lda (NXTTOK),y
+    sta (TEMP2),y
+    iny
+    cpy TEMP5
+    bne TX2CPYLOOP
+TX2SK99:
+    lda #0
+    sta (TEMP2),y    ; put zero on end
+    jsr spush_0    ; push address from mem stack on DS
+    lda TEMP5
+    sec
+    sbc TEMP6
+    clc
+    adc #4
+    tax
+    clc
+    jmp TX2END
+TX2NOGOOD:
+    sec
+TX2END:
+    rts
+;
+;  end of TXG2  (new text capture)
+;
+
+.else  ;  TXT2STACK
+
 TEXTGET:
     stz TEMP6
 		stz TEMP1
@@ -270,6 +377,8 @@ TEXTNOGOOD:
     sec
 TEXTGEND:
     rts
+
+.endif  ; ---TXT2STACK
     
 ;-----------------------   NUMBER CONVERSIONS
 ;
@@ -328,7 +437,7 @@ DIG_SNG:
   .ifdef SINGLE
 		cpx #1                       ; skip single digit, handle hard-wired or...
 		bne DIGCONV_LOOP             ; only one digit left, we can handle that elsewhere
-    jmp DIGCONV_ERR
+    jmp DIGCONV_ERR              ; not really an error, just return and let 'find' to it
   .endif     
 DIGCONV_LOOP:
 		jsr GETDIG
@@ -344,7 +453,7 @@ DIGCONT0:
     cmp #2
 		beq DIGBIN                     ; it's BIN, go there
     bra DIGHEX                     ; Go to hex if others not true
-DIGDEC:                            ; ADDING or SHIFTING WRONG
+DIGDEC:                           
     asl TEMP1                      ; 2nd shift; upper nybble doesn't end up right
 		rol TEMP1+1
 		lda TEMP1                      ; load results of two shifts

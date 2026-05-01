@@ -43,30 +43,13 @@ def_word "memptr", "memptr", 0
     lda MEMPTR
     sta TEMP1
     lda MEMPTR+1
-;    sta TEMP1+1
-;    jsr spush_0
     jmp keeps
 ;
 ;
 ; removed 4/24/26 - not used, do var/cons differently
-;
 ;def_word "allot", "allot", 0
-;    jsr spull_0       ; get byte count from stack, put in TEMP1
-;    ldy #1
-;    lda (NEXTHEAP),y
-;    sta TEMP2+1
-;    dey
-;    lda (NEXTHEAP),y
-;    sta TEMP2
-;    clc
-;    adc TEMP1
-;    sta (NEXTHEAP),y
-;    lda TEMP2+1
-;    adc TEMP1+1
-;    iny
-;    sta (NEXTHEAP),y
-;    jmp next
-;                             ': >r rp @ @ swap rp @ ! rp @ 2 - rp ! rp @ ! ;'
+;
+;
 def_word ">r", "s_to_r", 0
     jsr spull_0   ; put top of stack in TEMP1
     ldy #TEMP1
@@ -79,47 +62,45 @@ def_word "r>", "r_to_s", 0
     jsr spush_0     ; and push on DS stack
     jmp next
 ;
-;   next up:  
-;
 ;
 ;   HANDY FRAGMENTS   - 033126 - neither branch nor ?branch currently work.  Ugh
 ;                          
-Fbranch:                          ; [IP] = IP
-     ldy #0
-     lda (INSTPTR), y
-     sta TEMP4
-     iny
-     lda (INSTPTR), y
-     sta TEMP4+1
-     sta INSTPTR+1
-     lda TEMP4
-     sta INSTPTR
-     jmp next
+;Fbranch:                          ; [IP] = IP
+;     ldy #0
+;     lda (INSTPTR), y
+;     sta TEMP4
+;     iny
+;     lda (INSTPTR), y
+;     sta TEMP4+1
+;     sta INSTPTR+1
+;     lda TEMP4
+;     sta INSTPTR
+;     jmp next
 ;     
-Fskip:
-      ldx #INSTPTR  ; 'skip' (IP += 2)
-      lda #2
-      jsr addwx
-      jmp next
+;Fskip:
+;      ldx #INSTPTR  ; 'skip' (IP += 2)
+;      lda #2
+;      jsr addwx
+;      jmp next
 ;
 ;
-def_word "bbra", "bbra", 0        ; [IP] = IP  next
-     jmp Fbranch
+;def_word "bbra", "bbra", 0        ; [IP] = IP  next
+;     jmp Fbranch
 ;
-def_word "?bra", "qbra", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
-     jsr spull_0                      ;  above may be backwards, logically?
-     lda TEMP1
-     ora TEMP1+1
-     beq Fskip                       
-     jmp Fbranch
+;def_word "?bra", "qbra", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
+;     jsr spull_0                      ;  above may be backwards, logically?
+;     lda TEMP1
+;     ora TEMP1+1
+;     beq Fskip                       
+;     jmp Fbranch
 ;
 ;
-def_word "?nbra", "qnbra", 0      ; POP PSP  0 <> IF skip ELSE [IP] = IP THEN next 
-     jsr spull_0                      ;  above may be backwards, logically?
-     lda TEMP1
-     ora TEMP1+1
-     bne Fskip                       
-     jmp Fbranch
+;def_word "?nbra", "qnbra", 0      ; POP PSP  0 <> IF skip ELSE [IP] = IP THEN next 
+;     jsr spull_0                      ;  above may be backwards, logically?
+;     lda TEMP1
+;     ora TEMP1+1
+;     bne Fskip                       
+;     jmp Fbranch
 ;
 ;         Get next byte off INBUF, advance CURBUF
 def_word "in>", "intib", 0
@@ -176,7 +157,10 @@ def_word "lit", "literal", 0
      lda (INSTPTR),y
      sta TEMP1+1
      jsr spush_0
-     jmp Fskip
+     ldx #INSTPTR  ; 'skip' (IP += 2)
+     lda #2
+     jsr addwx
+     jmp next
 ;
 ;
 ;       MEMORY management:  VAR, CONS, ARRAY, etc.
@@ -1295,7 +1279,7 @@ div0err:                      ; pop jsr off stack, throw error
     jmp errrtn    
 ;
 ; ( hex -- d1 d2 d3 d4 d5 )
-def_word "dec", "xdec", 0  
+def_word "xdrv", "xdrv", 0  
     jsr spull_0
     lda TEMP1
     ldy TEMP1+1
@@ -1377,8 +1361,13 @@ def_word "syscall", "syscall", 0
 def_word "malloc", "malloc", 0
     jsr spull_1       ; type ( word ($00), char ($01), words ($02), bytes ($03), sz ($04) ..)
     jsr spull_0       ; # bytes   
+    jsr MALLOC        ; will return address in TEMP1
+    jsr spush_0       ; push ptr address to new record on stack
+    jmp next
+    
 MALLOC:
     ;  TEMP1 and TEMP2 should have bytes / record type if 'jsr MALLOC'
+    ;  uses TEMP3, y, x, a
     lda MEMLAST
     sec
     sbc #3
@@ -1396,7 +1385,7 @@ MALSK00:
     lda MEMLAST
     sta TEMP3
     lda MEMLAST+1
-    sta TEMP3+1         ; use TEMP3 to walk through clearing of maemory
+    sta TEMP3+1         ; use TEMP3 to walk through clearing of memory
     ldy #0
     lda TEMP2            ; write type first
     sta (TEMP3),y
@@ -1419,7 +1408,7 @@ MALLOOP:
     beq MALCONT
     lda TEMP1
     cmp #$FF
-    bne MALSK02        ; TRY ALL THIS, DONE FOR THIS MORNING
+    bne MALSK02       
     dec TEMP1+1
 MALSK02:
     inc TEMP3
@@ -1444,9 +1433,30 @@ MALCONT:                   ; now store MEMLAST at MEMPTR
     bcs MALLOCEND
     dec MEMPTR+1
 MALLOCEND:
-    jsr spush_0          ; push ptr address to new record on stack
-    jmp next
+    rts    
+; 
 ;
+; ( maddr -- len )
+def_word "mlen", "mlen", 0
+     jsr spull_1
+     jsr MEMLEN   ; returns length in TEMP1, maddr in TEMP3
+     jsr spush_0
+     jmp next
+     
+MEMLEN:           ; address in TEMP2
+     ldy #0
+     lda (TEMP2),y
+     sta TEMP3
+     iny
+     lda (TEMP2),y   ; and deref once
+     sta TEMP3+1
+     ldy #1
+     lda (TEMP3),y   ; skip over type, get length
+     sta TEMP1
+     iny
+     lda (TEMP3),y
+     sta TEMP1+1
+     rts
 ;----------------------------------------------------------------------------
 HYWORDS_END:
 ;  end hywords.s

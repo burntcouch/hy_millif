@@ -26,6 +26,10 @@ ftrain_0:
 .byte 0
 .byte ": loop lit r> , lit r> , lit lit , 1 , lit + , lit 2dup , lit = , lit ?branch , here @ - , lit 2drop , ; I"
 .byte 0
-.byte ": i rp @ 4 + @ ;  : j rp @ 8 + @ ;"
+.byte ": i rp @ 4 + @ ;  : j rp @ 8 + @ ;  : k rp @ 12 + @ ;"
+.byte 0
+.byte ": mdump memptr 2 + @ 1 dump ;"
+.byte 0
+.byte ": decsz! xdrv 6 4 malloc decs! ;"
 .byte 0, 0                               ; to mark end?           
 ftrain_end0:
