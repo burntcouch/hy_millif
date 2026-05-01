@@ -316,34 +316,217 @@ def_word ".C", "cdot", 0
     jsr WRITE_CHAR
     jmp this       ; 'this' includes jsr spush_0 and next
 
-; (u u ... -- ) print zero term'd, packed string or all of stack as ascii
 ;
-;    this doesn't quite work after 'drop' for some reason...
+; (addr -- )  -------  print sz string using new allocated RAM space
 ;
-def_word ".sz", "szdot",0
+def_word ".sz", "szdot", 0
+     jsr spull_0    ; will have MEMPTR addr
+     ldy #0
+     lda (TEMP1),y  
+     sta TEMP2      ; will have RAM stack address
+     iny
+     lda (TEMP1),y
+     sta TEMP2+1    ; TEMP2 now points at type byte of string?
+     ldy #0
+     lda (TEMP2),y
+     and #$7F       ; mask off temp flag, ifwhen
+     cmp #$04
+     bne SZEND
+     ldy #3
 SZLOOP:
-    lda DSPTR
-    cmp #DSEND
-    beq SZEND
-    jsr spull_0
-    lda TEMP1+1
-    beq SZEND
-    jsr WRITE_CHAR
-    lda TEMP1
-    beq SZEND
-    jsr WRITE_CHAR    
-    bra SZLOOP
+     lda (TEMP2),y
+     beq SZEND
+     jsr WRITE_CHAR
+     iny
+     bra SZLOOP
 SZEND:
-    jmp next
-;---------------------------------------------------------------------
+     jmp next  
 ;
-; extensions
+; ( wlen -- w w ... w )
 ;
-;---------------------------------------------------------------------
-extensions:
+def_word "dsgetn@", "dsgetn", 0
+     ldy #TEMP4
+     jsr spull    ; get # WORDS
+     jsr spull_1  ; get ptr addr
+     jsr MEMLEN   ; returns TEMP3 w/maddr, length in TEMP1
+     lda TEMP4
+     asl a
+     sta TEMP4
+     cmp TEMP1
+     bcs DSGETNSK
+     sta TEMP1
+DSGETNSK:     
+     lda TEMP1
+     cmp #$78
+     bcc DSGETNSK2
+     jmp DSGETERR
+DSGETNSK2:
+     clc
+     adc #3
+     sta TEMP1     
+     ldy #3
+     jmp DSGLOOP
+;
+; ( addr -- w w ... w )  push words from memory to stack
+;
+def_word "dsget@", "dsget", 0
+     jsr spull_1    ; get addr on memstack
+     jsr MEMLEN     ; maddr in TEMP3, length in TEMP1
+     lda TEMP1
+     cmp #$78
+     bcs DSGETERR
+     lda TEMP1+1
+     bne DSGETERR    ; too much data, can't push this on
+     lda TEMP1
+     clc
+     adc #3
+     sta TEMP1
+     ldy #3
+DSGLOOP:
+     lda (TEMP3),y
+     sta TEMP2
+     iny
+     lda (TEMP3),y
+     sta TEMP2+1
+     iny
+     phy
+     jsr spush_1
+     ply
+     cpy TEMP1
+     bne DSGLOOP
+DSGEND:
+     jmp next
+DSGETERR:
+    lda #ERR_SPTR   ; throw pointer error
+    sta ERRFLAG
+    jmp errrtn
+;
+; ( w w w..len addr -- addr)    stores len BYTES (words * 2) from stack
+;
+def_word "dwstk!", "dwstkstore", 0
+     jsr HSSETUP
+     jsr DW_STFWD
+     jsr spush_1      ; and push ptr addr back on stack
+     jmp next    
+     
+DW_STFWD:
+     ldy #0            ; count up
+DWFLOOP:
+     lda DSPTR
+     sec
+     sbc #DSEND
+     bcs DW_FWDEND
+     phy
+     jsr spull_0
+     ply
+     lda TEMP1
+     sta (TEMP3),y
+     iny
+     lda TEMP1+1
+     sta (TEMP3),y
+     iny
+     cpy TEMP5
+     bne DWFLOOP
+DW_FWDEND:
+     rts     
+;
+;
+; ( c c c...len addr -- addr)    stores len chars from stack
+;
+def_word "dcstk!", "dcstkstore", 0
+     jsr HSSETUP
+     jsr HS_STFWD
+     jsr spush_1      ; and push ptr addr back on stack
+     jmp next     
 
+HS_STFWD:
+     ldy #0            ; count up
+HSRLOOP:
+     lda DSPTR
+     sec
+     sbc #DSEND
+     bcs HS_FWDEND
+     phy
+     jsr spull_0
+     ply
+     lda TEMP1
+     sta (TEMP3),y
+     iny
+     cpy TEMP5
+     bne HSRLOOP
+HS_FWDEND:
+     rts
+;
+;
+def_word "rdcstk!", "rdstkstore", 0
+     jsr HSSETUP
+     jsr HS_STREV
+     jsr spush_1      ; and push ptr addr back on stack
+     jmp next
+     
+HSSETUP:
+     jsr spull_1     ; get addr from malloc run -> TEMP2
+     jsr MEMLEN      ; length in TEMP1, maddr TEMP3
+     lda TEMP1
+     sta TEMP5
+     lda TEMP3
+     clc
+     adc #3          ; calc offset to storage
+     sta TEMP3
+     bcc HSSETUPEND
+     inc TEMP3+1
+HSSETUPEND:
+     rts
+
+HS_STREV:
+     ldy TEMP5            ; count down from length
+     lda #0
+     dey
+     sta (TEMP3),y
+HSFLOOP:
+     lda DSPTR
+     sec
+     sbc #DSEND
+     bcs HS_REVEND
+     phy
+     jsr spull_0
+     ply
+     lda TEMP1
+     dey
+     sta (TEMP3),y
+     bne HSFLOOP
+HS_REVEND:
+     rts
+     
+DECSFINISH:
+     ldy #0
+DECSCLRLOOP:             ; replace $00 or leading $30 with spaces
+     lda (TEMP3),y
+     beq  DECSTSK02     
+     cmp #$30
+     beq  DECSTSK02
+     bra  DECSTDONE
+DECSTSK02:
+     lda #$20
+     sta (TEMP3),y
+     iny
+     bra DECSCLRLOOP
+DECSTDONE:
+     rts  
+;
+;
+;
+def_word "decs!", "decstore", 0
+     jsr HSSETUP
+     jsr HS_STREV
+     jsr DECSFINISH
+     jsr spush_1      ; and push ptr addr back on stack
+     jmp next
+;
+;
+extensions:
 ;---------------------------------------------------------------------
-; ( w n -- w >> n ) ; shift right
+; ( w n -- w >> n ) -- shift right
 def_word ">>", "shr", 0
     jsr spull_1
     lda TEMP2
@@ -358,7 +541,7 @@ SRLOOP:
 SRZERO:
     jmp next
     
-; ( w n -- w << n ) ; shift left
+; ( w n -- w << n ) -- shift left
 def_word "<<", "shl", 0
     jsr spull_1
     lda TEMP2
