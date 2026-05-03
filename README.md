@@ -68,9 +68,13 @@ Update, 5/3/26:
  0882: .R         | 0869: ?R         | 0850: ?S         | 0822: .S         |
  0817: reset      | 080C: abort      | 0803: bye        |
 
-  
 </pre>
-<p>
+<p>  USAGE:  the # conversion and string capture functions in the interpreter diverge a bit from standard Forth.  As noted above, single digit numbers are defined explicitly as Forth words, so they can be included in compiled words bare; but multdigit #'s require the use of ' lit [ ## , ] ' or similar in order to store them inline in a a word.</p>
+<p> Strings are even more divergent.  The ' ." ... " ' construct does not exist, nor do 'parse', 'type', 'word', 'char', '[char]' etc.   Instead, the q^...^ should be used; this construct creates a zero-terminated string and uses 'malloc' to allocate memory for it.  'malloc' returns the handle (double indirection) of the string on the memory stack (see below).  The '.sz' word will print the string on the screen if the address of the pointer to the string is on the top of the stack.  You can store the address as a constant or in a variable to use it otherwise. </p>
+<p> EXAMPLE:  q^this is a test.^ cons astr .sz </p>
+<p> ... this will print 'this is a test.'.  Using 'astr' in a compiled word will return the string handle as described above.</p>
+<p> Memory manager:  'malloc' is the main word to allocate memory for data types more complicated than variables and constants, which are still implemented as in traditional Forth, ie either the address or the value are returned from a single 16-bit word store inline within the instance.</p><p>  'memptr' returns the current value of the pointer on the memory stack; it uses the same 'store' and 'decrement' strategy as the DS and RT stacks, so 'memptr' always returns the stack position that the NEXT allocated item's address will be stored in.  </p><p>  'mlen' is a general purpose function that returns the length of a 'malloc'-created item.</p><p> 'mktemp' marks an item in the memory storage area as temporary, while 'purge' (work in progress) will remove temporary items in the memory stack and reorganize the stack to re-use deallocated space. 
+</p>
 <pre>
 LATEST CHANGES (3/21/26):
      ROM conversion is now done; this version resides almost entirely at $A000 and on;
