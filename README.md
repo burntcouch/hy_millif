@@ -15,7 +15,52 @@ Update, 5/3/26:
 <p> -- Run the COPYTORAM routine from the jmp point at A003.  'A003R' in Wozmon.</p>
 <p> -- Start HyForth at $0800 by entering '800R'</p>
 <p>   You will see a 'HyForth 0.xx MMDDYY' version banner and then the HF> prompt. </p>
+<pre>
+ 1BE7: |          | 1BDF: |          | 1BCA: decsz!     | 1BB4: mdump      |
+ 1BA6: k          | 1B96: j          | 1B86: i          | 1B41: loop       |
+ 1B2A: do         | 1B01: repeat     | 1AE9: while      | 1AD1: until      |
+ 1AB9: again      | 1AAB: begin      | 1A84: else       | 1A6D: then       |
+ 1A58: if         | 1A3B: branch     | 1A0B: ?branch    | 1A00: 2*         |
+ 194A: exit       | 1916: :          | 18FA: ;          | 18DE: ,          |
+ 18D3: ]          | 18CA: [          | 18AC: I          | 1876: @          |
+ 1862: !          | 185A: ;$         | 1852: :$         | 1845: exec       |
+ 181B: mlen       | 1793: malloc     | 1745: purge0     | 172B: mktemp     |
+ 1704: syscall    | 16D5: disasm     | 16BB: free       | 168F: memcpy     |
+ 167B: xdrv       | 1638: /          | 160C: *          | 15F1: max        |
+ 15C4: min        | 159F: rand32     | 1592: rand       | 1571: rseed      |
+ 1542: Acol       | 14F8: Ascr       | 14DA: Acls       | 144C: bload      |
+ 13E9: cload      | 13A3: autoload   | 1347: snip       | 1313: pick       |
+ 12E6: 2over      | 12D5: 2drop      | 12B9: 2dup       | 12A0: tuck       |
+ 128E: nip        | 1275: over       | 125A: rot        | 1245: xR         |
+ 1230: xS         | 1223: drop       | 1214: dup        | 11F9: swap       |
+ 11DE: <          | 11C2: >=         | 11A4: <=         | 117C: >          |
+ 116B: 0=         | 1152: =          | 1138: <>         | 111C: neg        |
+ 1106: not        | 10ED: xor        | 10D5: or         | 10BC: and        |
+ 10B2: %1         | 10A8: %0         | 109E: $F         | 1094: $E         |
+ 108A: $D         | 1080: $C         | 1076: $B         | 106C: $A         |
+ 1060: -9         | 1054: -8         | 1048: -7         | 103C: -6         |
+ 1030: -5         | 1024: -4         | 1018: -3         | 100C: -2         |
+ 1001: 0          | 0FF9: $0         | 0FED: -1         | 0FE4: 9          |
+ 0FDA: $9         | 0FD1: 8          | 0FC7: $8         | 0FBE: 7          |
+ 0FB4: $7         | 0FAB: 6          | 0FA1: $6         | 0F98: 5          |
+ 0F8E: $5         | 0F85: 4          | 0F7B: $4         | 0F72: 3          |
+ 0F68: $3         | 0F5F: 2          | 0F55: $2         | 0F48: 1          |
+ 0F40: $1         | 0E9E: cons       | 0E1B: var        | 0DFD: lit        |
+ 0DEE: spc        | 0DDD: cells      | 0DC9: c!         | 0DB6: c@         |
+ 0DA0: in>        | 0D90: r>         | 0D80: >r         | 0D6E: memptr     |
+ 0D65: rp         | 0D5C: sp         | 0D51: back       | 0D46: here       |
+ 0D3B: last       | 0D2A: >in        | 0D18: cr         | 0CFF: debug      |
+ 0CF1: s@         | 0CDA: bool       | 0CC1: -          | 0CA9: +          |
+ 0C8B: nand       | 0C79: emit       | 0C69: key        | 0C23: cbit       |
+ 0C01: sbit       | 0BD3: tbit       | 0BB6: <<         | 0B99: >>         |
+ 0B82: decs!      | 0B27: rdcstk!    | 0AFA: dcstk!     | 0AC8: dwstk!     |
+ 0A89: dsget@     | 0A56: dsgetn@    | 0A29: .sz        | 09F9: ord        |
+ 09E4: .C         | 09CB: .          | 0911: words      | 08E9: dump       |
+ 0882: .R         | 0869: ?R         | 0850: ?S         | 0822: .S         |
+ 0817: reset      | 080C: abort      | 0803: bye        |
 
+  
+</pre>
 <p>
 <pre>
 LATEST CHANGES (3/21/26):
