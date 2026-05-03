@@ -7,14 +7,15 @@
       - THANKS to AGSB (https://github.com/agsb) for the starting point here....<p>
    MilliForth 6502 --> (https://github.com/agsb/milliForth-6502)
 <p>
-<p>  The HyForth project starts here with AGSB's core Forth engine;
-  the engine will be moved to ROM and the heap will be copied to RAM
-  on cold start.<p>
+----------------------------------------------------------------------
 <p>  
-<p>  The ulitmate purpose of working this port through is to develop a
-  flexible and powerful operating system for the Hydra-16 of reasonable
-  efficiency and minimal memory footprint.  HyForth will grow and 
-  shrink in RAM footprint according to context.<p>
+Update, 5/3/26:
+<p> Hell of a lot has changed in a month or so.  ROM conversion still works as noted below in 3/21/26 notes, and installation now proceeds very simply: </p>
+<p> -- change to appropriate ROM bank in Wozmon (I use bank $03 for testing most of the time) by saving the bank number to location ZP $01 --  e.g '1:3' in Wozmon if you are using bank $03.</p>
+<p> -- Run the COPYTORAM routine from the jmp point at A003.  'A003R' in Wozmon.</p>
+<p> -- Start HyForth at $0800 by entering '800R'</p>
+<p>   You will see a 'HyForth 0.xx MMDDYY' version banner and then the HF> prompt. </p>
+
 <p>
 <pre>
 LATEST CHANGES (3/21/26):
