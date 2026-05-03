@@ -15,6 +15,15 @@ Update, 5/3/26:
 <p> -- Run the COPYTORAM routine from the jmp point at A003.  'A003R' in Wozmon.</p>
 <p> -- Start HyForth at $0800 by entering '800R'</p>
 <p>   You will see a 'HyForth 0.xx MMDDYY' version banner and then the HF> prompt. </p>
+----------------------------------------------------------------------
+<p>   As you can below, a lot of words have been added in the last month and a half; the list is a screenshot of the output of 'words' on the most current version (0.88 5/2/26).</p>
+<p>  The list is only very loosely organized at this time, into 4 main sections:</p>
+<p> CORE:  string with 'bye' and 'abort', the basic stack access words up to about 'lit', 'var', and 'cons' ... and at the end of the list the rest of the essenstial words for basic Forthiness:  'I' ('immediate'), [, ], ',', ';', ':' (the compiler), @, ! and lastly 'exit'. </p>
+<p>  PRIMITIVES:  the interpreter includes functions to handle inline #'s and text, but for speed and efficiency reasons all 'single digit' #'s (whether decimal, binary, or hex) have explicit definitions in native code, thus '0' - '9', '-1' - '-9', '$0' - '$F', '%0' and '%1'.  Also all of the conditionals are defined, as well as the basic logic functions.  'negate' and 'invert' as defined in traditional Forth have been changed to 'neg' and 'not', and AGSB's '0#' was changed to 'bool' (to convert the TOS value to it's boolean equivalent).  Most of the stack manipulation functions are also in the group, such as 'dup' and 'swap' but including more tricky ones such as 'pick' (indexed stack access) and 'snip' (remove bottomost cell from stack).</p>
+<p>  ADDITIONAL STUFF:  I could not do without '*' and '/' for very long so I found very efficient 6502 algorithms for those; both return a 32-bit value; in the case of '/' this includes both the division result and the remainder...so 'mod' is just '/ drop'.  '*' always gives a 32 bit result with the LSB on top of the stack.</p>
+<p>  This group also includes a lot of debugging tools, including a disassembler, 'syscall' for system calls, a random # generator, some ANSI screen functions ('Ascr', 'Acls', 'Acol'), and the basic parts of the memory manager:  'malloc', 'mlen', 'mktemp', and 'purge'.</p>
+<p>  Lastly, you will see 'cload', 'autoload' and 'bload'.  These three words are the essential for loading extra 'meta-compiler' words and binary libraries.</p>
+<p>  META-COMPILED WORDS:  the traditional Forth conditionals and loop structures are NOT easy to implement in native code using AGSB's engine, so for now these are loaded (using 'cload' or 'autoload').  These include 'if', 'then', 'else', 'do', 'loop', 'begin', 'again', 'repeat', 'until', and 'while', as well as the 'i/j/k' loop indexes. </p>
 <pre>
  1BE7: |          | 1BDF: |          | 1BCA: decsz!     | 1BB4: mdump      |
  1BA6: k          | 1B96: j          | 1B86: i          | 1B41: loop       |
