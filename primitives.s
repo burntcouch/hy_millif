@@ -27,7 +27,7 @@ def_word ".S", "splist", 0       ; changed from %S
     lda #'S'
     jsr WRITE_CHAR
     lda #DSEND
-    jsr list
+    jsr STKLIST
     WCRLF_np
     jmp next
 
@@ -37,10 +37,12 @@ def_word "?S", "spp", 0
     stz TEMP1
     lda DSPTR
     cmp #DSEND
-    bne SPPEND
+    bne EMPEND
+EMPCONT:
     lda #$FF
     sta TEMP1
-SPPEND:
+    sta TEMP1+1
+EMPEND:
     jsr spush_0
     jmp next
 
@@ -50,12 +52,8 @@ def_word "?R", "rtp", 0
     stz TEMP1
     lda RTPTR
     cmp #RTEND
-    bne RTPEND
-    lda #$FF
-    sta TEMP1
-RTPEND:
-    jsr spush_0
-    jmp next   
+    bne EMPEND
+    jmp EMPCONT  
     
 ;----------------------------------------------------------------------
 ; ( -- ) list of return stack
@@ -68,13 +66,13 @@ def_word ".R", "rplist", 0       ; changed from %R
     lda #'R'
     jsr WRITE_CHAR
     lda #RTEND
-    jsr list
+    jsr STKLIST
     WCRLF_np
     jmp next
 
 ;----------------------------------------------------------------------
 ;  list a sequence of references ( for .S and .R )
-list:
+STKLIST:
     sec                 ; calc diff and length of list
     sbc TEMP1
     lsr
@@ -179,7 +177,7 @@ WORD_SKIP:               ; TEMP1 has address of work-record,
     lda #2
     jsr addwx
     ldy #0                
-    jsr show_name        ; put size + flag, name
+    jsr WRDSHOWNAME        ; put size + flag, name
     
     lda #10
     sec
@@ -220,18 +218,10 @@ WORD_END:
     clc              ; clean return
     jmp next
 ;
-;-------------------------------------- WORDS ---------------------
-; ( -- ) words in dictionary, 
-;def_word "oldw", "oldw", 0
-;
-;  removed 4/24/26 - see previous versions of 'primitives.s'
-;
-;----------------------------------------------------------------------
-;
 ;  routines needed for 'words'
 ;
 ; print size and name 
-show_name:
+WRDSHOWNAME:
      lda #':'
      jsr WRITE_CHAR
 ;    lda (TEMP1), y
@@ -315,7 +305,31 @@ def_word ".C", "cdot", 0
     lda TEMP1
     jsr WRITE_CHAR
     jmp this       ; 'this' includes jsr spush_0 and next
-
+;   
+;    
+def_word "ord", "ord", 0
+    jsr token                  ; get first token
+    ldy #0
+    lda (NXTTOK),y
+    clc
+    adc #$30
+    jsr WRITE_CHAR
+    ldy #1                     ; skip len, first time
+ORDLOOP:    
+    lda (NXTTOK), y
+    beq  ORDNONE
+    cmp #$20
+    beq  ORDNONE
+    sta TEMP1
+    stz TEMP1+1
+    lda #$20                  
+    ldy #0
+    sta (NXTTOK), y           ; clear it (may be unnecc.)
+    iny
+    sta (NXTTOK), y
+    jsr spush_0
+ORDNONE:
+    jmp next
 ;
 ; (addr -- )  -------  print sz string using new allocated RAM space
 ;
@@ -329,8 +343,8 @@ def_word ".sz", "szdot", 0
      sta TEMP2+1    ; TEMP2 now points at type byte of string?
      ldy #0
      lda (TEMP2),y
-     and #$7F       ; mask off temp flag, ifwhen
-     cmp #$04
+     and #$7F       ; mask off temp flag
+     cmp #MEM_SZ
      bne SZEND
      ldy #3
 SZLOOP:
@@ -342,7 +356,7 @@ SZLOOP:
 SZEND:
      jmp next  
 ;
-; ( wlen -- w w ... w )
+; ( addr n -- w0 w1 ... w(n-1) )  push n words from memory to stack
 ;
 def_word "dsgetn@", "dsgetn", 0
      ldy #TEMP4
@@ -431,7 +445,7 @@ DW_FWDEND:
      rts     
 ;
 ;
-; ( c c c...len addr -- addr)    stores len chars from stack
+; ( 0c 0c 0c...len addr -- addr)    stores len chars from stack
 ;
 def_word "dcstk!", "dcstkstore", 0
      jsr HSSETUP
@@ -457,6 +471,7 @@ HSRLOOP:
 HS_FWDEND:
      rts
 ;
+; ( 0c 0c 0c...len addr -- addr)  stores len chars from stack, reverse order
 ;
 def_word "rdcstk!", "rdstkstore", 0
      jsr HSSETUP
@@ -497,7 +512,9 @@ HSFLOOP:
      bne HSFLOOP
 HS_REVEND:
      rts
-     
+;
+;   replace leading zeros with spcs when creating decimal ascii string
+;
 DECSFINISH:
      ldy #0
 DECSCLRLOOP:             ; replace $00 or leading $30 with spaces
@@ -679,9 +696,9 @@ def_word "+", "plus", 0
     lda TEMP2
     adc TEMP1
     sta TEMP1
-    lda TEMP2 + 1
-    adc TEMP1 + 1     
-                    ; sta TEMP1 + 1 at 'keeps', then jsr spush_0 and 'next'
+    lda TEMP2+1
+    adc TEMP1+1     
+                    ; 'keeps' = sta TEMP1+1; jsr spush_0; jmp next
     jmp keeps
 
 ; ( w1 w2 -- w1-w2 )          
@@ -692,25 +709,34 @@ def_word "-", "minus", 0
     lda TEMP1
     sbc TEMP2
     sta TEMP1
-    lda TEMP1 + 1
-    sbc TEMP2 + 1     
-                   ; sta TEMP1 + 1 at 'keeps', then jsr spush_0 and 'next'
+    lda TEMP1+1
+    sbc TEMP2+1     
+                   ; 'keeps' = sta TEMP1+1; jsr spush_0; jmp next
     clc            ; not sure why, but just in case?
     jmp keeps    
     
 ;---------------------------------------------------------------------
 ; ( 0 -- $0000) | ( n -- $FFFF)  normalize boolean - change TOS to $0000 if false, $FFFF if TRUE
-def_word "nb", "normbool", 0
+def_word "bool", "normbool", 0
     jsr spull_0
-    lda TEMP1 + 1
+    lda TEMP1+1
     ora TEMP1    ; only zero if both are zero
-    beq isfalse  ; is = 0?
-istrue:
+    beq PUSHFALSE
+    jmp PUSHTRUE
+;
+; ( -- $FFFF )
+def_word "TRUE", "istrue", 0
+PUSHTRUE:
     lda #$FF
-isfalse:
-    sta TEMP1             ; keeps includes sta TEMP +1, then jsr spush_0, then jmp next                                           
-    jmp keeps            ; urgh.  if zero on top of DS, push back zero; otherwise push $FF
-
+    sta TEMP1
+    jmp keeps
+;
+; ( -- $0000 )
+def_word "FALSE", "isfalse", 0
+PUSHFALSE:
+    stz TEMP1
+    stz TEMP1+1
+    jmp this
 ;---------------------------------------------------------------------
 ; ( -- state ) pushes addr of status word on stack
 def_word "s@", "state", 0

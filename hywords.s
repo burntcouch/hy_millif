@@ -63,44 +63,15 @@ def_word "r>", "r_to_s", 0
     jmp next
 ;
 ;
-;   HANDY FRAGMENTS   - 033126 - neither branch nor ?branch currently work.  Ugh
+;   BRANCH / ?BRANCH -- neither currently work.  Ugh
 ;                          
-;Fbranch:                          ; [IP] = IP
-;     ldy #0
-;     lda (INSTPTR), y
-;     sta TEMP4
-;     iny
-;     lda (INSTPTR), y
-;     sta TEMP4+1
-;     sta INSTPTR+1
-;     lda TEMP4
-;     sta INSTPTR
-;     jmp next
-;     
-;Fskip:
-;      ldx #INSTPTR  ; 'skip' (IP += 2)
-;      lda #2
-;      jsr addwx
-;      jmp next
-;
 ;
 ;def_word "bbra", "bbra", 0        ; [IP] = IP  next
-;     jmp Fbranch
 ;
 ;def_word "?bra", "qbra", 0      ; POP PSP  0= IF skip ELSE [IP] = IP THEN next 
-;     jsr spull_0                      ;  above may be backwards, logically?
-;     lda TEMP1
-;     ora TEMP1+1
-;     beq Fskip                       
-;     jmp Fbranch
-;
 ;
 ;def_word "?nbra", "qnbra", 0      ; POP PSP  0 <> IF skip ELSE [IP] = IP THEN next 
-;     jsr spull_0                      ;  above may be backwards, logically?
-;     lda TEMP1
-;     ora TEMP1+1
-;     bne Fskip                       
-;     jmp Fbranch
+;
 ;
 ;         Get next byte off INBUF, advance CURBUF
 def_word "in>", "intib", 0
@@ -144,11 +115,12 @@ def_word "spc", "spc", 0
    sta TEMP1
    stz TEMP1+1
    jmp this
-
-; (? -- ?)                - ': lit rp @ @ dup 2 + rp @ ! @ ;'
+;----------------------------------------------
+; (? -- ?)      -  LIT -
+;                - ': lit rp @ @ dup 2 + rp @ ! @ ;'
 ;                     OR  - [IP] PUSH DS, IP += 2, next    
 ;   
-;                                 surely it isn't THIS easy...
+;                    yep, it's this easy...
 def_word "lit", "literal", 0       
      ldy #0
      lda (INSTPTR),y
@@ -235,11 +207,11 @@ VCFINISH:
     sta LASTHEAP                ; bring back BACKHEAP to LASTHEAP
     lda BACKHEAP + 1 
     sta LASTHEAP + 1
-                                
+    
+    jsr spush_0    
     jmp next
 ;
 ;    VCCODE - 'dovar' - copied into a var word ( 'DOES>' )
-;
 ;
 VCCODE:         ; NEXTHEAP ('here') should start here
    bit #00
@@ -337,7 +309,9 @@ CCFINISH:
     sta LASTHEAP                ; bring back BACKHEAP to LASTHEAP
     lda BACKHEAP + 1 
     sta LASTHEAP + 1
-                                
+    
+    ldy #TEMP8
+    jsr spush    
     jmp next
 ;
 ;   cons copies this in and 'customizes it' by
@@ -611,7 +585,7 @@ CMPLINK:
    lda TEMP1+1
    cmp TEMP2+1
    beq IEQFALSE
-   jmp IEQTRUE
+   jmp PUSHTRUE
 ;
 ; (n1 n2 -- n1=n2)  equal   
 def_word "=", "eq", 0
@@ -623,7 +597,7 @@ def_word "=", "eq", 0
    lda TEMP1+1
    cmp TEMP2+1
    bne IEQFALSE
-   jmp IEQTRUE
+   jmp PUSHTRUE
 ;
 ; (n1 -- n1=0)  equal to zero  
 def_word "0=", "eqz", 0
@@ -631,7 +605,7 @@ def_word "0=", "eqz", 0
    lda TEMP1
    ora TEMP1+1       ; only zero if both zero
    bne IEQFALSE
-   jmp IEQTRUE
+   jmp PUSHTRUE
 ;
 
 ; (n1 n2 -- n1>n2)  more than
@@ -647,14 +621,9 @@ def_word ">", "gt", 0
    bcc IEQFALSE
    beq IEQFALSE
 IEQTRUE:  
-   lda #$FF
-   jmp IEQEND
+   jmp PUSHTRUE
 IEQFALSE:
-   lda #0
-IEQEND:
-   sta TEMP1
-   sta TEMP1+1
-   jmp this
+   jmp PUSHFALSE
 
 ;   
 ; (n1 n2 == n1<=n2) less than or equal
@@ -669,7 +638,7 @@ def_word "<=", "lte", 0
    cmp TEMP2
    bcc IEQTRUE
    beq IEQTRUE
-   jmp IEQFALSE
+   jmp PUSHFALSE
    
 ;
 ; (n1 n2 == n1>=n2) greater than or equal
@@ -684,7 +653,7 @@ GTELINK:
    lda TEMP1
    cmp TEMP2
    bcc IEQFALSE
-   jmp IEQTRUE
+   jmp PUSHTRUE
 ;   
 ; (n1 n2 == n1<n2) less than
 def_word "<", "lt", 0
@@ -697,7 +666,7 @@ def_word "<", "lt", 0
    lda TEMP1
    cmp TEMP2
    bcc IEQTRUE
-   jmp IEQFALSE
+   jmp PUSHFALSE
 ;
 
 ;----------------------CLASSIC FORTH-------------------------
@@ -895,39 +864,6 @@ def_word "autoload", "autoload", 0
     sta ALFLAG
     jmp next
     
-ALOADTIB:
-    ldy #0
-    lda #$20
-    sta (TIB),y
-ALOADLOOP:
-    lda (TEMP7),y
-    beq ALOADSKIP
-    iny
-    sta (TIB),y
-    bra ALOADLOOP
-ALOADSKIP:
-    jsr ALOADCHKDONE
-    iny
-    rts                  ; y points at trailing space
-
-ALOADCHKDONE:
-    iny
-    lda (TEMP7),y
-    bne ALNOTSKIP        ; calc next address if not done
-    stz ALFLAG           ; turn off autoload
-    bra ALNOTDONE
-ALNOTSKIP:
-    tya
-    clc
-    adc TEMP7
-    sta TEMP7
-    bcc ALNOTDONE
-    inc TEMP7+1
-ALNOTDONE:
-    dey
-    rts
-    
-
 ; (a -- )       load a compile-able script from memory, zero term'd
 def_word "cload", "cload", 0
     ;stz ALFLAG         ; clear autoload flag
@@ -1342,20 +1278,100 @@ def_word "disasm", "disasm", 0
 DISEND:
     jmp next
 
-; (0y 0a jsaddr -- 0x) jump to external code with parms passed via A,Y, result in X
+; (jsaddr 0a 0y-- 0x) jump to external code with parms passed via A,Y, result in X
 def_word "syscall", "syscall", 0
-    jsr spull_0    ; addr
-    jsr spull_1    ; parm to pass to a
     jsr spull_2    ; parm to pass to y
+    jsr spull_1    ; parm to pass to a
+    jsr spull_0    ; addr
     lda TEMP1
     sta SYSCALL+1
     lda TEMP1+1
     sta SYSCALL+2
     ldy TEMP3
     lda TEMP2
-    jmp SYSCALL
+    jsr SYSCALL
     jmp next
 ;
+;  below must be in RAM to work
+;
+SYSCALL:
+    jsr SCDUMMY        ; store into SYSCALL+1, +2 to customize jump
+    txa                ; returned stuff in X
+    beq SCSKIP         ; if returns zero, don't do anything else
+    sta TEMP1          ; otherwise...
+    stz TEMP1+1
+    jsr spush_0        ; push result onto stack
+    rts
+SCSKIP:
+    pla
+    pla    
+    jmp errrtn
+SCDUMMY:
+    ldx #0
+    rts
+;
+;
+; ( paddr -- )
+def_word "mktemp", "mktemp", 0
+    jsr spull_1       ; get mptr in TEMP2
+    jsr MEMLEN        ; len in TEMP1, maddr in TEMP3
+    ldy #0
+    lda (TEMP3),y
+    ora #$80          ; set high bit on type byte
+    sta (TEMP3),y
+    jmp next
+;
+;   ( -- )  --- 'deallocate' last memory item in stack if marked 'temp'
+;
+def_word "purge0", "purge0", 0
+    lda MEMPTR
+    sta TEMP2    
+    lda MEMPTR+1
+    sta TEMP2+1
+    cmp #>(MEMSTK+MEMEND)
+    bcc PURGECONT
+    bne PURGEEND
+    lda TEMP2
+    cmp #<(MEMSTK+MEMEND)
+    bcs PURGEEND
+PURGECONT:
+    lda TEMP2    
+    clc
+    adc #2
+    bcc  PURGESK00
+    inc TEMP2+1
+PURGESK00:    
+    jsr MEMLEN        ; len in TEMP1, maddr in TEMP3
+    ldy #0
+    lda (TEMP3),y
+    and #$80          ; mask off all but temp bit
+    beq  PURGEEND
+    lda TEMP2         ; change pointers if temp
+    sta MEMPTR
+    lda TEMP2+1
+    sta MEMPTR+1
+    lda TEMP3
+    clc
+    adc #3
+    bcc  PURGESK01
+    inc TEMP3+1
+PURGESK01:
+    clc
+    adc TEMP1
+    sta MEMLAST
+    lda TEMP3+1
+    adc TEMP1+1
+    sta MEMLAST+1
+PURGEEND:
+    jmp next
+
+;
+;  Malloc record types
+MEM_WORD = $00
+MEM_CHAR = $01
+MEM_WARR = $02
+MEM_BARR = $03
+MEM_SZ = $04
 ;
 ; ( bytes type -- staddr )
 def_word "malloc", "malloc", 0
@@ -1457,6 +1473,32 @@ MEMLEN:           ; address in TEMP2
      lda (TEMP3),y
      sta TEMP1+1
      rts
+     
+.ifdef YSOUND
+;
+;                        word definitions for Yamaha 2151 sound chip
+;
+def_word "sndinit", "sndinit", 0
+     jsr SOUND_INIT
+     jmp next
+     
+def_word "sndtest", "sndtest", 0
+     jsr SOUND_TEST
+     jmp next
+
+; ( xxaa -- )    send byte(a) to register(x) on yamaha 2151
+def_word "ywrite", "ywrite", 0
+     jsr spull_0
+     ldx TEMP1+1
+     lda TEMP1
+     jsr YM_WRITE
+     bcc YMGOOD
+     jmp PUSHFALSE
+YMGOOD:
+     jmp PUSHTRUE
+.endif 
+;
+;
 ;----------------------------------------------------------------------------
 HYWORDS_END:
 ;  end hywords.s
