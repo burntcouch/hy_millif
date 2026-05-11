@@ -76,13 +76,106 @@ WRITE_HSTRING:
                 bne  @write_loop
                 plx
                 rts   
-    
+;-------------------------------------------------------------
+;
+;           CODE called by engine AND heap
+;
+;------- used by 'exit'
+;------------------------NOTE:  this is ALL of 'exit'.  For modularity purposes
+;----------------- this is the only sensible place for it.
+;
+EXIT:
+unnest:                      ; EXIT - done with previous word, on to next whether compiled or primitive
+                            
+    ldy #INSTPTR
+    jsr rpull                ; IP = [RTPTR], RTPTR += 2
+
+next:                        ;    go on to next word; IP is pointing at next entry in data field of word
+; WORKREG = (INSTPTR) ; INSTPTR += 2
+    ldx #INSTPTR              
+    ldy #WORKREG
+    jsr copyfrom             ; W = [IP], IP += 2  ( and either ENTER or EXECUTE )
+
+pick:                      ;                COMPILED OR PRIMITIVE?
+                           ; let's figure out if STATUS+1 still has length btye for previous word...
+                           ; if so, we can look at bit 6 to do 'pick' instead of using 'compare pages'
+                           ;
+.ifdef DEBUG
+     lda DFLAG
+     bne PRINTWSKIP        ; print W and [W] etc if DEBUG
+     WSEQ_raw WDISP
+     lda WORKREG+1
+     jsr WRITE_BYTE
+     lda WORKREG
+     jsr WRITE_BYTE
+     WSEQ_raw WATDISP
+     ldy #0
+     lda (WORKREG),y
+     jsr WRITE_BYTE
+PRINTWSKIP:
+.endif
+                 ; .. use old-fashioned way AND new tricks
+                 ;
+     lda WORKREG + 1       ; compare pages (MSBs)
+     cmp #>ends + 1        ;  !! Compiled must be higher in memory than hardcoded !! (see below)
+     bmi jump              ; jump over nest if native code
+     ldy #1                ; ldy #0 if check extra byte
+     lda (WORKREG),y
+     beq jump               ; yep, jump to native execution
+
+nest:                     ; ENTER in classic Forth lingo   ( COMPILED )
+    ldy #INSTPTR
+    jsr rpush                   ; RTPTR -=2, [RTPTR] = [IP] 
+    lda WORKREG                 ; W = IP
+    sta INSTPTR
+    lda WORKREG + 1
+    sta INSTPTR + 1
+    jmp next                    ; next
+
+jump:                      ; EXECUTE                      ( PRIMITIVE )
+    jmp (WORKREG)          ; start running code at next word
+                           ;  JUMP [W]
+;
+;------- used by 'autoload'
+ALOADTIB:
+    ldy #0
+    lda #$20
+    sta (TIB),y
+ALOADLOOP:
+    lda (TEMP7),y
+    beq ALOADSKIP
+    iny
+    sta (TIB),y
+    bra ALOADLOOP
+ALOADSKIP:
+    jsr ALOADCHKDONE
+    iny
+    rts                  ; y points at trailing space
+
+ALOADCHKDONE:
+    iny
+    lda (TEMP7),y
+    bne ALNOTSKIP        ; calc next address if not done
+    stz ALFLAG           ; turn off autoload
+    bra ALNOTDONE
+ALNOTSKIP:
+    tya
+    clc
+    adc TEMP7
+    sta TEMP7
+    bcc ALNOTDONE
+    inc TEMP7+1
+ALNOTDONE:
+    dey
+    rts
+;
+
+;
 ;-------------------------------------------------------------
 ;                MATH routines
 ;         with MULT16 / DIV16, signs handled by calling word.
 ;         we just do the math here.
 ;
-; MULT16 not quite right; no fuck!  Complete botch, start again. (3/27)
 ;
 MULT16:                ; 16 x 16 multiply; TEMP1 and TEMP2 are #'s, TEMP1 will be result
     stz TEMP3          ; with TEMP3 as high bytes
@@ -611,7 +704,7 @@ H2DFIN:
 ;
 HYWELCOME:
     .byte CR, LF
-    .byte "HyForth 0.85 04-24-2026"
+    .byte "HyForth 0.91 05-07-2026"
     .byte CR, LF, $00
 CLEAR:
     lda #1
@@ -849,6 +942,40 @@ DUMPSTKEND:
         pla
         plp
         rts
+;
+;    load mainoff (TEMP1 $F0), ramstart (TEMP3 $F4), and endsoff (TEMP2 $F2)
+;     with current ROM offsets (main = start, ends = finish)
+;     and ramstart with destination corresponding to main.
+;     Set 'supprint' <> 0 (TEMP5 $FC) to suppress printing of progress bar.
+;
+MEMCPY:
+    ldy  #0
+COPYLOOP:
+    lda (mainoff),y
+    sta (ramstart),y
+    lda mainoff
+    cmp endsoff
+    bne SKIP1
+    lda mainoff+1
+    cmp endsoff+1
+    beq CPRTS
+SKIP1:
+    lda supprint
+    bne SKIP01
+    lda #'.'
+    jsr WRITE_CHAR
+SKIP01:
+    inc mainoff
+    bne SKIP2
+    inc mainoff + 1
+SKIP2:
+    inc ramstart
+    bne SKIP3
+    inc ramstart+1
+SKIP3:
+    bra COPYLOOP
+CPRTS:
+    rts
 ;
 ;
 ;   DSS version of DISASM

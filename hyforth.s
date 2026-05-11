@@ -217,6 +217,8 @@ HYWORDS := 1      ; add in additional hardcoded words / logic
 
 ANSIOK := 1         ; add ANSI screen stuff
 
+YSOUND := 1        ; add sound support
+
 ;TXT2STACK := 1     ; use old TXTGET instead of new
 
 ;---------------------------------------------------------------------
@@ -270,15 +272,31 @@ MEMEND = $01FE
 ;----------------------   BIOS calls -----------------------------------
 WRITE_CHAR = $F803
 READ_CHAR = $F800     ; returns C=1, then char in A if char is there
-;WRITE_BYTE = $F806    ; new thunk
-WRITE_BYTE = $F8A3
+;WRITE_BYTE = $F806    ; new thunk 1.8Ch+ 4/26
+WRITE_BYTE = $F8A3     ; 1.8Ce 2/26
+
+
+;
+;  other Hydra-16 entry points (1.8Ce Feb '26)
+;
+; sound
+YM_WRITE = $E433
+SOUND_INIT = $E2E6
+SOUND_TEST = $E37E
+;
+; spi
+;F9E8 SPI_INIT_DELAY
+;F9CC SPI_RECV
+;F9AD SPI_SEND
+;F9A3 SPI_OPERATION_DONE
+;F974 SPI_TRANSCEIVE
 
 WOZMON = $FE00
 ;DISASM_AY = $F80C    ; A+Y for starting address, C=1 for multiple opcodes, X for # of codes
 ZP_XAM = $31       ; can we see address left by DISASM here?
 ;ZP_D_STATE = $2B
 
-INROM = $A000
+INROM = $E600
 ALTBUF = $6000
 ALTBUF_end = $6FFF
 MEMTOP = $8000            ; malloc allocates DOWN from MEMTOP
@@ -405,17 +423,18 @@ MEMSTK:                      ; memory manager
 ;
 ; ************ the real deal...
 ;
-.org $A000
+.org $E600
     
 main:
     jmp cold
     jmp COPYTORAM
-    jmp DISASM         ; assumes address in $31/$32  (ZP_XAM)
 
 HYPROMPT:
     .byte $0D, $0A
     .byte "HF>"
     .byte 0
+;
+.ifdef DEBUG
 WDISP:
     .byte $0D, $0A
     .byte "W="
@@ -423,18 +442,10 @@ WDISP:
 WATDISP:
     .byte "  [W]="
     .byte 0
-SYSCALL:
-    jsr SCDUMMY        ; store into SYSCALL+1, +2 to customize jump
-    txa                ; returned stuff in X
-    beq SCSKIP         ; if returns zero, don't do anything else
-    sta TEMP1          ; otherwise...
-    stz TEMP1+1
-    jsr spush_0        ; push result onto stack
-SCSKIP:    
-    jmp errrtn
-SCDUMMY:
-    ldx #0
-    rts
+.endif
+;
+;
+;
 cold:
     cld
     jsr CLEAR          ; zero out zero page, INBUF, DS, and RT
@@ -500,7 +511,6 @@ quit:                             ; clear RT
     sta (TIB),y     ; clear INBUF stuff
     stz CURBUF    ; clear cursor  (pointer into INBUF)
     stz STATUS    ; status is 'interpret' == \0
-    ;stz ALFLAG                  ; autoload flag OFF
     
     .byte $2c       ; mask next two bytes, nice trick !
 ;---------------------------------------------------------------------
@@ -674,9 +684,6 @@ GETLNSKIPCRLF:          ; SKIP to here if don't want CRLF
     dey
 ; start it
     sta CURBUF
-;.ifdef DEBUG  
-;    jsr DUMPREG
-;.endif
     
 ;---------------------------------------------------------------------
 ; in place every token,
@@ -697,10 +704,7 @@ TOKENSCAN:  ; scan spaces
     dey   ; keep y == <end of input word> + 1  
     sty CURBUF 
 
-TOKENDONE:  ; find size and store it;
-;.ifdef DEBUG 
-;    jsr DUMPREG                        ; DEBUG
-;.endif    
+TOKENDONE:  ; find size and store it;  
     tya
     sec
     sbc NXTTOK     
@@ -746,9 +750,6 @@ TOKNEXT:
 
 
 TOKENEND:
-;.ifdef DEBUG  
-;    jsr DUMPREG
-;.endif
     clc     ; clean - setup token  
     rts
 ;
@@ -761,7 +762,7 @@ TOKENEND:
 ;  spush/rpush - pushes something onto stacks indexed on ZP by Y (increment using addwx/incwx)
 ;  spull/rpull - pulls from stacks, copies into ZP indexed by Y (decrement builtin)
 ;
-;  addwx/incwx/decwx do some of the incrementing duties, alth
+;  addwx/incwx/decwx do some of the inc/dec-rementing duties
 ;
 ;---------------------------------------------------------------------
 ;
@@ -942,17 +943,19 @@ ENGINEEND:
 ;------------------------------------------------------------------------
 ;
 upper_ram:
-.include "upper.s"
+   .include "upper.s"
 UPPER_END:
 ;
-;------------------------------------------------------------------------
-;                          
-;    hyf_rom.s -- debugging, initialization, and COPYTORAM
 ;
-.include "hyf_rom.s"
+YSOUND_START:
+;.ifdef YSOUND
+;   .include "sound_os.s"
+;.endif
+YSOUND_END:
+;
 ;
 ROMCODEEND:                         ; end of all code
-
+;
 ;  end of hyforth.s
 ;
 ;-----------------------------------------------------------------------
@@ -962,23 +965,28 @@ ROMCODEEND:                         ; end of all code
 ;-----------------------------------------------------------------------
 ;                            BELOW ENDS UP IN RAM
 ;-----------------------------------------------------------------------
+.segment "STARTUP"
+.org $A000
+;------------------------------------------------------------------------
+;                          
+;    hyf_rom.s -- COPYTORAM
+;
+.include "hyf_rom.s"
+;
+;
 COPYSTART:                    ; marks beginning of copy in ROM space
 .segment "CODE"                
 .org $0800
 RAMSTART:
      jmp main                   ; MAIN program start
                                 ; should be at $A000 now
+     jmp COPYTORAM
 ;---------------------------------------------------------------------
 ;        primitives.s -- original AGSB hardcoded dictionary
 ;
 primitives:
 .include "primitives.s"
 ;
-;---------------------ADD IN EXTRA HARDCODED LOGIC / NUMERALS / ETC--
-.ifdef HYWORDS
-   .include "hywords.s"
-.endif
-;---------------------------------------------------------------------
 ;
 ;------------ CRITICAL CORE PRIMITIVES (AGSB and PGS) ----------------
 ;
@@ -1033,34 +1041,10 @@ keeps:                      ; saves bytes since have to get here anyway
 this:                       ; same as above
     jsr spush_0             ; then push back on stack
     jmp next
-; ;
-FETCH:
-    jsr spull_0             ; get addr from DS
-    ldx #TEMP1
-FETCH_WX:                    ; set X from somewhere else
-    ldy #TEMP2
-    jsr copyfrom            ; copies data from [TEMP1] => TEMP2                
-    lda 0, y                ; copy from cell at y (zp) to TEMP1
-    sta TEMP1
-    lda 1, y
-    sta TEMP1 + 1
-    jsr spush_0             ; then push on stack
-    rts
-    
+;   
 ;-----------------------IMMEDIATE, '[', ']', ','-----------------------
 def_word "I", "Imm", 0   
 wimm:                        ; jmp here if proccessing a compiled
- ;   lda LASTHEAP
- ;   sta TEMP3
- ;   lda LASTHEAP+1
- ;   sta TEMP3+1
- ;   ldx #TEMP3            ; NOTE:  if problems down the road, copy 'here' to a TEMP first....
- ;   lda #2
- ;   jsr addwx                ; update 'here' to point at lengthbyte 
- ;   ldy #0
- ;   lda #$80                 ; sets immediate flag
- ;   ora (TEMP3),y
-                      ; jmp here if proccessing a compiled
     lda LASTHEAP+1           ;   word that needs to run 'immediate'.
     sta TEMP9+1
     lda LASTHEAP             ; get addr of 'last' compiled word, copy to TEMP4, add 2
@@ -1075,7 +1059,6 @@ IMMSKIP:
     ora #$80                 ; ...set bit 7 and store
     sta (TEMP9),y
     jmp next
- 
 ;
 def_word "[", "leftbrack", FLAG_IMM       ; switch to 'interpret'
     stz STATUS
@@ -1151,7 +1134,6 @@ COMCOPY:
     sta (NEXTHEAP), y
     iny
     bne COMPLOOP
-
 COMPEND:
     tya                          ; and update NEXTHEAP  :  'here' incremented by length
     ldx #(NEXTHEAP)
@@ -1159,6 +1141,11 @@ COMPEND:
 
 ;~~~~~~~~ all done....
     jmp next                     ; and then see below; compiled word will continue until ';'
+;
+;---------------------ADD IN EXTRA HARDCODED LOGIC / NUMERALS / ETC--
+.ifdef HYWORDS
+   .include "hywords.s"
+.endif
 ;---------------------------------------------------------------------
 ; Thread Code Engine
 ;
@@ -1172,57 +1159,12 @@ COMPEND:
 ;---------------------------------------------------------------------
 ; ( -- ) 
 def_word "exit", "exit", 0
-unnest:                      ; EXIT - done with previous word, on to next whether compiled or primitive
-                            
-    ldy #INSTPTR
-    jsr rpull                ; IP = [RTPTR], RTPTR += 2
+    jmp EXIT
 
-next:                        ;    go on to next word; IP is pointing at next entry in data field of word
-; WORKREG = (INSTPTR) ; INSTPTR += 2
-    ldx #INSTPTR              
-    ldy #WORKREG
-    jsr copyfrom             ; W = [IP], IP += 2  ( and either ENTER or EXECUTE )
-
-pick:                      ;                COMPILED OR PRIMITIVE?
-                           ; let's figure out if STATUS+1 still has length btye for previous word...
-                           ; if so, we can look at bit 6 to do 'pick' instead of using 'compare pages'
-                           ;
-.ifdef DEBUG
-     lda DFLAG
-     bne PRINTWSKIP        ; print W and [W] etc if DEBUG
-     WSEQ_raw WDISP
-     lda WORKREG+1
-     jsr WRITE_BYTE
-     lda WORKREG
-     jsr WRITE_BYTE
-     WSEQ_raw WATDISP
-     ldy #0
-     lda (WORKREG),y
-     jsr WRITE_BYTE
-PRINTWSKIP:
-.endif
-                 ; .. use old-fashioned way AND new tricks
-                 ;
-     lda WORKREG + 1       ; compare pages (MSBs)
-     cmp #>ends + 1        ;  !! Compiled must be higher in memory than hardcoded !! (see below)
-     bmi jump              ; jump over nest if native code
-     ldy #1                ; ldy #0 if check extra byte
-     lda (WORKREG),y
-     beq jump               ; yep, jump to native execution
-
-nest:                     ; ENTER in classic Forth lingo   ( COMPILED )
-    ldy #INSTPTR
-    jsr rpush                   ; RTPTR -=2, [RTPTR] = [IP] 
-    lda WORKREG                 ; W = IP
-    sta INSTPTR
-    lda WORKREG + 1
-    sta INSTPTR + 1
-    jmp next                    ; next
-
-jump:                      ; EXECUTE                      ( PRIMITIVE )
-    jmp (WORKREG)          ; start running code at next word
-                           ;  JUMP [W]
-           
+; mark end of ROM IMAGE
+;
+;.byte "\CODEEND/"
+;.byte 0        
 ;-----------------------------------------------------------------------
 ; BEWARE, MUST BE AT END! MINIMAL THREAD CODE DEPENDS ON IT!
 ;
@@ -1237,8 +1179,8 @@ ends:                            ; end marker of hardcoded primitives
 ;
 ; include training data
 
-.segment "LIB"
-.org $C000
+.byte "***HEAPEND***"
+;.org $C000
     .byte "FTRAIN"
     .byte 0,0
 .include "ftrain.s"
@@ -1250,5 +1192,6 @@ ends:                            ; end marker of hardcoded primitives
     .byte 0,0
 .include "bload.s"
 ;
-
+;  end of hyforth.s
+;
     
