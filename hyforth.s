@@ -269,12 +269,18 @@ RTEND = $FE
 ; moves backwards
 MEMEND = $01FE
 
+;  malloc record types
+MEM_WORD = $00
+MEM_CHAR = $01
+MEM_WARR = $02
+MEM_BARR = $03
+MEM_SZ = $04
+;
 ;----------------------   BIOS calls -----------------------------------
 WRITE_CHAR = $F803
 READ_CHAR = $F800     ; returns C=1, then char in A if char is there
 ;WRITE_BYTE = $F806    ; new thunk 1.8Ch+ 4/26
 WRITE_BYTE = $F8A3     ; 1.8Ce 2/26
-
 
 ;
 ;  other Hydra-16 entry points (1.8Ce Feb '26)
@@ -296,9 +302,7 @@ WOZMON = $FE00
 ZP_XAM = $31       ; can we see address left by DISASM here?
 ;ZP_D_STATE = $2B
 
-INROM = $E600
-ALTBUF = $6000
-ALTBUF_end = $6FFF
+INROM = $EA00
 MEMTOP = $8000            ; malloc allocates DOWN from MEMTOP
 
 ;----------------------------------------------------------------------
@@ -423,7 +427,7 @@ MEMSTK:                      ; memory manager
 ;
 ; ************ the real deal...
 ;
-.org $E600
+.org $EA00
     
 main:
     jmp cold

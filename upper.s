@@ -81,8 +81,8 @@ WRITE_HSTRING:
 ;           CODE called by engine AND heap
 ;
 ;------- used by 'exit'
-;------------------------NOTE:  this is ALL of 'exit'.  For modularity purposes
-;----------------- this is the only sensible place for it.
+;------------------------NOTE:  this is ALL of 'exit' but the screaming.
+;-----------------  For modularity purposes this is the only sensible place for it.
 ;
 EXIT:
 unnest:                      ; EXIT - done with previous word, on to next whether compiled or primitive
@@ -96,11 +96,9 @@ next:                        ;    go on to next word; IP is pointing at next ent
     ldy #WORKREG
     jsr copyfrom             ; W = [IP], IP += 2  ( and either ENTER or EXECUTE )
 
-pick:                      ;                COMPILED OR PRIMITIVE?
-                           ; let's figure out if STATUS+1 still has length btye for previous word...
-                           ; if so, we can look at bit 6 to do 'pick' instead of using 'compare pages'
+pick:                      ;        'THE SWITCHER' - COMPILED OR PRIMITIVE?
                            ;
-.ifdef DEBUG
+.ifdef DEBUG               ;  DEBUG
      lda DFLAG
      bne PRINTWSKIP        ; print W and [W] etc if DEBUG
      WSEQ_raw WDISP
@@ -169,7 +167,92 @@ ALNOTDONE:
     dey
     rts
 ;
-
+;-------- malloc and mlen
+    
+MALLOC:
+    ;  TEMP1 and TEMP2 should have bytes / record type if 'jsr MALLOC'
+    ;  uses TEMP3, y, x, a
+    lda MEMLAST
+    sec
+    sbc #3
+    sta MEMLAST
+    bcs MALSK00
+    dec MEMLAST+1
+MALSK00:
+    sec
+    sbc TEMP1
+    sta MEMLAST
+    lda MEMLAST+1
+    sbc TEMP1+1
+    sta MEMLAST+1
+                        ;MEMLAST updated to start of new record
+    lda MEMLAST
+    sta TEMP3
+    lda MEMLAST+1
+    sta TEMP3+1         ; use TEMP3 to walk through clearing of memory
+    ldy #0
+    lda TEMP2            ; write type first
+    sta (TEMP3),y
+    iny
+    lda TEMP1            ; LSB length
+    sta (TEMP3),y
+    iny
+    lda TEMP1+1          ; MSB length
+    sta (TEMP3),y
+    ldx #TEMP3
+    lda #3
+    jsr addwx            ; increment TEMP3 by 3
+MALLOOP:
+    lda #0
+    ldy #0
+    sta (TEMP3),y
+    dec TEMP1
+    bne MALSK02    
+    lda TEMP1+1
+    beq MALCONT
+    lda TEMP1
+    cmp #$FF
+    bne MALSK02       
+    dec TEMP1+1
+MALSK02:
+    inc TEMP3
+    bne MALSK01
+    inc TEMP3+1
+MALSK01:    
+    bra MALLOOP
+MALCONT:                   ; now store MEMLAST at MEMPTR
+    ldy #0
+    lda MEMLAST
+    sta (MEMPTR),y
+    iny
+    lda MEMLAST+1
+    sta (MEMPTR),y
+    lda MEMPTR+1
+    sta TEMP1+1
+    lda MEMPTR           
+    sta TEMP1             ; copy to TEMP1 before incrementing
+    sec                   ; MEMPTR + 2
+    sbc #2
+    sta MEMPTR
+    bcs MALLOCEND
+    dec MEMPTR+1
+MALLOCEND:
+    rts    
+; 
+MEMLEN:           ; address in TEMP2
+     ldy #0
+     lda (TEMP2),y
+     sta TEMP3
+     iny
+     lda (TEMP2),y   ; and deref once
+     sta TEMP3+1
+     ldy #1
+     lda (TEMP3),y   ; skip over type, get length
+     sta TEMP1
+     iny
+     lda (TEMP3),y
+     sta TEMP1+1
+     rts
 ;
 ;-------------------------------------------------------------
 ;                MATH routines
