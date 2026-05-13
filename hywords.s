@@ -1351,27 +1351,20 @@ PURGESK00:
     lda TEMP2+1
     sta MEMPTR+1
     lda TEMP3
-    clc
-    adc #3
-    bcc  PURGESK01
-    inc TEMP3+1
-PURGESK01:
-    clc
-    adc TEMP1
+;    clc
+;    adc #3
+;    bcc  PURGESK01
+;    inc TEMP3+1
+;PURGESK01:
+;    clc
+;    adc TEMP1
     sta MEMLAST
     lda TEMP3+1
-    adc TEMP1+1
+;    adc TEMP1+1
     sta MEMLAST+1
 PURGEEND:
     jmp next
-
 ;
-;  Malloc record types
-MEM_WORD = $00
-MEM_CHAR = $01
-MEM_WARR = $02
-MEM_BARR = $03
-MEM_SZ = $04
 ;
 ; ( bytes type -- staddr )
 def_word "malloc", "malloc", 0
@@ -1380,77 +1373,7 @@ def_word "malloc", "malloc", 0
     jsr MALLOC        ; will return address in TEMP1
     jsr spush_0       ; push ptr address to new record on stack
     jmp next
-    
-MALLOC:
-    ;  TEMP1 and TEMP2 should have bytes / record type if 'jsr MALLOC'
-    ;  uses TEMP3, y, x, a
-    lda MEMLAST
-    sec
-    sbc #3
-    sta MEMLAST
-    bcs MALSK00
-    dec MEMLAST+1
-MALSK00:
-    sec
-    sbc TEMP1
-    sta MEMLAST
-    lda MEMLAST+1
-    sbc TEMP1+1
-    sta MEMLAST+1
-                        ;MEMLAST updated to start of new record
-    lda MEMLAST
-    sta TEMP3
-    lda MEMLAST+1
-    sta TEMP3+1         ; use TEMP3 to walk through clearing of memory
-    ldy #0
-    lda TEMP2            ; write type first
-    sta (TEMP3),y
-    iny
-    lda TEMP1            ; LSB length
-    sta (TEMP3),y
-    iny
-    lda TEMP1+1          ; MSB length
-    sta (TEMP3),y
-    ldx #TEMP3
-    lda #3
-    jsr addwx            ; increment TEMP3 by 3
-MALLOOP:
-    lda #0
-    ldy #0
-    sta (TEMP3),y
-    dec TEMP1
-    bne MALSK02    
-    lda TEMP1+1
-    beq MALCONT
-    lda TEMP1
-    cmp #$FF
-    bne MALSK02       
-    dec TEMP1+1
-MALSK02:
-    inc TEMP3
-    bne MALSK01
-    inc TEMP3+1
-MALSK01:    
-    bra MALLOOP
-MALCONT:                   ; now store MEMLAST at MEMPTR
-    ldy #0
-    lda MEMLAST
-    sta (MEMPTR),y
-    iny
-    lda MEMLAST+1
-    sta (MEMPTR),y
-    lda MEMPTR+1
-    sta TEMP1+1
-    lda MEMPTR           
-    sta TEMP1             ; copy to TEMP1 before incrementing
-    sec                   ; MEMPTR + 2
-    sbc #2
-    sta MEMPTR
-    bcs MALLOCEND
-    dec MEMPTR+1
-MALLOCEND:
-    rts    
-; 
+
 ;
 ; ( maddr -- len )
 def_word "mlen", "mlen", 0
@@ -1458,22 +1381,8 @@ def_word "mlen", "mlen", 0
      jsr MEMLEN   ; returns length in TEMP1, maddr in TEMP3
      jsr spush_0
      jmp next
-     
-MEMLEN:           ; address in TEMP2
-     ldy #0
-     lda (TEMP2),y
-     sta TEMP3
-     iny
-     lda (TEMP2),y   ; and deref once
-     sta TEMP3+1
-     ldy #1
-     lda (TEMP3),y   ; skip over type, get length
-     sta TEMP1
-     iny
-     lda (TEMP3),y
-     sta TEMP1+1
-     rts
-     
+;
+;     
 .ifdef YSOUND
 ;
 ;                        word definitions for Yamaha 2151 sound chip
